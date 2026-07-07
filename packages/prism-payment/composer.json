@@ -1,0 +1,12 @@
+{
+    "name": "financedistrict/woocommerce-prism-payment",
+    "description": "Stablecoin payment handler for WooCommerce UCP via Finance District Prism",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "classmap": ["includes/"]
+    }
+}

@@ -1,0 +1,43 @@
+.fd-prism-meta {
+    margin: 0;
+}
+.fd-prism-meta dt {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 10px;
+}
+.fd-prism-meta dt:first-child {
+    margin-top: 0;
+}
+.fd-prism-meta dd {
+    margin: 2px 0 0 0;
+    word-break: break-all;
+    font-size: 13px;
+}
+.fd-prism-meta a {
+    color: #2271b1;
+    text-decoration: none;
+}
+.fd-prism-meta a:hover {
+    text-decoration: underline;
+}
+.fd-prism-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.fd-prism-badge--testnet {
+    background: #fff3cd;
+    color: #856404;
+}
+.fd-prism-badge--mainnet {
+    background: #d4edda;
+    color: #155724;
+}
+.fd-prism-ref {
+    font-size: 12px;
+}

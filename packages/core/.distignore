@@ -1,0 +1,7 @@
+/.distignore
+/.phpunit.cache
+/composer.json
+/composer.lock
+/phpunit.xml
+/tests
+/vendor
