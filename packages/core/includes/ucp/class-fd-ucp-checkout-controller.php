@@ -55,6 +55,18 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $rl->get_error_code(), $rl->get_error_message(), 429 );
         }
 
+        // Idempotency-Key: return existing session if key was already used.
+        $idempotency_key = $request->get_header( 'idempotency-key' );
+        if ( $idempotency_key ) {
+            $existing = $this->load_session_by_idempotency_key( $idempotency_key );
+            if ( $existing ) {
+                return new WP_REST_Response(
+                    FD_UCP_Formatter::format_checkout_session( $existing, $this->registry ),
+                    200
+                );
+            }
+        }
+
         $body       = $request->get_json_params();
         $line_items = $body['line_items'] ?? null;
 
@@ -166,6 +178,7 @@ class FD_UCP_Checkout_Controller {
             'payment_meta'     => wp_json_encode( $payment_meta ),
             'wc_order_id'      => $order_id,
             'agent_fingerprint' => $this->compute_fingerprint( $request ),
+            'idempotency_key'  => $idempotency_key,
             'created_at'       => $now,
             'updated_at'       => $now,
             'expires_at'       => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
@@ -210,7 +223,7 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
         }
 
-        if ( in_array( $session['status'], array( 'canceled', 'completed' ), true ) ) {
+        if ( in_array( $session['status'], array( 'canceled', 'completed', 'expired' ), true ) ) {
             return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
         }
 
@@ -358,7 +371,27 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $rl->get_error_code(), $rl->get_error_message(), 429 );
         }
 
-        $session = $this->load_session( $request->get_param( 'id' ) );
+        $session_id = $request->get_param( 'id' );
+
+        // Acquire an advisory lock to prevent concurrent /complete calls from double-settling.
+        global $wpdb;
+        $lock_name = 'fd_ucp_complete_' . md5( $session_id );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $got_lock = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 2)', $lock_name ) );
+        if ( '1' !== (string) $got_lock ) {
+            return FD_UCP_Error::response( 'settlement_in_progress', 'Another settlement attempt is in progress', 409 );
+        }
+
+        try {
+            return $this->do_complete_session( $request, $session_id );
+        } finally {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+        }
+    }
+
+    private function do_complete_session( WP_REST_Request $request, string $session_id ): WP_REST_Response {
+        $session = $this->load_session( $session_id );
         if ( ! $session ) {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
@@ -368,7 +401,7 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
         }
 
-        if ( in_array( $session['status'], array( 'canceled', 'completed' ), true ) ) {
+        if ( in_array( $session['status'], array( 'canceled', 'completed', 'complete_in_progress', 'expired' ), true ) ) {
             return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
         }
 
@@ -879,6 +912,25 @@ class FD_UCP_Checkout_Controller {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- custom table, not cacheable
         $row = $wpdb->get_row(
             $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fd_ucp_checkout_sessions WHERE id = %s", $id ),
+            ARRAY_A
+        );
+        if ( $row && ! empty( $row['expires_at'] ) && strtotime( $row['expires_at'] ) < time() ) {
+            if ( ! in_array( $row['status'], array( 'completed', 'canceled' ), true ) ) {
+                $this->update_session_row( $id, array(
+                    'status'     => 'expired',
+                    'updated_at' => current_time( 'mysql', true ),
+                ) );
+                $row['status'] = 'expired';
+            }
+        }
+        return $row ?: null;
+    }
+
+    private function load_session_by_idempotency_key( string $key ): ?array {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $row = $wpdb->get_row(
+            $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fd_ucp_checkout_sessions WHERE idempotency_key = %s LIMIT 1", $key ),
             ARRAY_A
         );
         return $row ?: null;

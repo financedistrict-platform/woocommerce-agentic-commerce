@@ -28,12 +28,14 @@ class FD_UCP_Installer {
             payment_meta LONGTEXT NULL,
             wc_order_id BIGINT NULL,
             agent_fingerprint VARCHAR(128) NULL,
+            idempotency_key VARCHAR(128) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NULL,
             expires_at DATETIME NULL,
             PRIMARY KEY (id),
             KEY status (status),
-            KEY wc_order_id (wc_order_id)
+            KEY wc_order_id (wc_order_id),
+            UNIQUE KEY idempotency_key (idempotency_key)
         ) $charset;
 
         CREATE TABLE {$wpdb->prefix}fd_ucp_carts (

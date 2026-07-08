@@ -7,11 +7,8 @@ class FD_UCP_Status {
      * Derive UCP checkout status from session data.
      */
     public static function resolve( array $session ): string {
-        if ( 'canceled' === $session['status'] ) {
-            return 'canceled';
-        }
-        if ( 'completed' === $session['status'] ) {
-            return 'completed';
+        if ( in_array( $session['status'], array( 'canceled', 'completed', 'expired' ), true ) ) {
+            return $session['status'];
         }
 
         $missing = self::missing_requirements( $session );

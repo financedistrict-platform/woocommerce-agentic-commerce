@@ -26,6 +26,13 @@ function fd_dummy_payment_init() {
         return;
     }
 
+    if ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) {
+        add_action( 'admin_notices', function () {
+            echo '<div class="error"><p><strong>' . esc_html__( 'Finance District Dummy Payment', 'fd-dummy-for-woocommerce' ) . '</strong> ' . esc_html__( 'is disabled because WP_DEBUG is off. This handler is for testing only and must not run in production.', 'fd-dummy-for-woocommerce' ) . '</p></div>';
+        } );
+        return;
+    }
+
     require_once plugin_dir_path(__FILE__) . 'includes/class-fd-dummy-handler.php';
 
     add_action('fd_ucp_register_payment_handlers', function(FD_Payment_Registry $registry) {

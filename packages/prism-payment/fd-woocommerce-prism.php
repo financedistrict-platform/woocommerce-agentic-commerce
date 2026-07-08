@@ -16,6 +16,12 @@
  */
 defined('ABSPATH') || exit;
 
+add_action( 'before_woocommerce_init', function () {
+    if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+    }
+} );
+
 add_action('plugins_loaded', 'fd_prism_init', 25); // after UCP plugin at priority 20
 
 function fd_prism_init() {
@@ -45,6 +51,16 @@ function fd_prism_init() {
         if (!empty($api_url) && !empty($api_key)) {
             $handler = new FD_Prism_Handler($api_url, $api_key);
             $registry->register($handler);
+        } else {
+            add_filter( 'fd_ucp_checkout_messages', function( array $messages ) {
+                $messages[] = array(
+                    'type'     => 'warning',
+                    'code'     => 'payment_handler_misconfigured',
+                    'content'  => 'Prism payment gateway is enabled but API credentials are missing. No payment methods available.',
+                    'severity' => 'blocking',
+                );
+                return $messages;
+            } );
         }
     });
 

@@ -102,6 +102,7 @@ class FD_UCP_Formatter {
         $status   = FD_UCP_Status::resolve( $session );
         $missing  = FD_UCP_Status::missing_requirements( $session );
         $messages = FD_UCP_Status::missing_messages( $missing );
+        $messages = apply_filters( 'fd_ucp_checkout_messages', $messages, $session );
 
         $response = array(
             'ucp'        => array(
