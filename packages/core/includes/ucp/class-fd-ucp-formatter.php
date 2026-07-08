@@ -167,7 +167,7 @@ class FD_UCP_Formatter {
      * Format a WC product for UCP catalog response.
      */
     public static function format_product( WC_Product $product ): array {
-        $price = self::to_minor( (float) $product->get_price() );
+        $price = (float) $product->get_price();
 
         $formatted = array(
             'id'          => (string) $product->get_id(),
@@ -184,8 +184,8 @@ class FD_UCP_Formatter {
         );
 
         if ( $product->is_type( 'variable' ) ) {
-            $min = self::to_minor( (float) $product->get_variation_price( 'min' ) );
-            $max = self::to_minor( (float) $product->get_variation_price( 'max' ) );
+            $min = (float) $product->get_variation_price( 'min' );
+            $max = (float) $product->get_variation_price( 'max' );
             $formatted['price_range']['min']['amount'] = $min;
             $formatted['price_range']['max']['amount'] = $max;
 
@@ -198,7 +198,7 @@ class FD_UCP_Formatter {
                     'id'           => (string) $var['variation_id'],
                     'title'        => $var_product->get_name(),
                     'price'        => array(
-                        'amount'   => self::to_minor( (float) $var_product->get_price() ),
+                        'amount'   => (float) $var_product->get_price(),
                         'currency' => get_woocommerce_currency(),
                     ),
                     'availability' => $var_product->is_in_stock() ? 'in_stock' : 'out_of_stock',
