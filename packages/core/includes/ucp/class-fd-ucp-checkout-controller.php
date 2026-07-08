@@ -532,10 +532,11 @@ class FD_UCP_Checkout_Controller {
             $order->set_shipping_last_name( $buyer['last_name'] );
         }
 
-        $order->update_meta_data( '_wc_order_attribution_source_type', 'fd-ucp' );
-        $order->update_meta_data( '_wc_order_attribution_utm_source', 'fd-ucp' );
-
         $order->calculate_totals();
+        $order->save();
+
+        $order->add_meta_data( '_wc_order_attribution_source_type', 'fd-ucp', true );
+        $order->add_meta_data( '_wc_order_attribution_utm_source', 'fd-ucp', true );
         $order->save();
 
         return $order;
