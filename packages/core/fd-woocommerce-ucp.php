@@ -61,4 +61,12 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-plugin.php';
 
     FD_UCP_Plugin::instance();
+
+    // Map fd-ucp source type to a readable label in the WC Orders "Origin" column.
+    add_filter( 'wc_order_attribution_origin_formatted_source', function ( string $formatted, string $source ): string {
+        return 'fd-ucp' === $source ? 'AI Agent (UCP)' : $formatted;
+    }, 10, 2 );
+    add_filter( 'wc_order_attribution_origin_label', function ( string $label, string $source_type ): string {
+        return 'fd-ucp' === $source_type ? '' : $label;
+    }, 10, 2 );
 }
