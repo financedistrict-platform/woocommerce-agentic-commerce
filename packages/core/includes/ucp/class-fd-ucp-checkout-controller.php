@@ -372,6 +372,18 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
         }
 
+        // Guard against settling when the WC order has been cancelled by an admin
+        if ( ! empty( $session['wc_order_id'] ) ) {
+            $existing_order = wc_get_order( (int) $session['wc_order_id'] );
+            if ( $existing_order && $existing_order->get_status() === 'cancelled' ) {
+                $this->update_session_row( $session['id'], array(
+                    'status'     => 'canceled',
+                    'updated_at' => current_time( 'mysql', true ),
+                ) );
+                return FD_UCP_Error::response( 'order_cancelled', 'Order has been cancelled', 409 );
+            }
+        }
+
         $body    = $request->get_json_params();
         $payment = $body['payment'] ?? null;
 
@@ -494,6 +506,7 @@ class FD_UCP_Checkout_Controller {
         $order = wc_create_order( array(
             'status'      => 'pending',
             'customer_id' => 0,
+            'created_via' => 'fd-ucp',
         ) );
 
         if ( is_wp_error( $order ) ) {

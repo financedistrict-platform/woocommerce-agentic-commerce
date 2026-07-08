@@ -12,32 +12,48 @@ class FD_Rate_Limiter {
     }
 
     public function check( string $action = 'default' ): true|WP_Error {
-        $ip  = self::get_client_ip();
-        $key = 'fd_rl_' . md5( $action . '|' . $ip );
+        global $wpdb;
 
-        $data = get_transient( $key );
-        $now  = time();
+        $ip    = self::get_client_ip();
+        $key   = 'fd_rl_' . md5( $action . '|' . $ip );
+        $lock  = 'fd_rl_lock_' . md5( $key );
+        $now   = time();
 
-        if ( false === $data ) {
-            set_transient( $key, array( 'count' => 1, 'start' => $now ), $this->window_seconds );
+        // Acquire a MySQL advisory lock (1s timeout) to make read-check-write atomic.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+        $got_lock = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 1)', $lock ) );
+
+        if ( '1' !== (string) $got_lock ) {
+            return new WP_Error( 'rate_limited', 'Too many requests. Try again later.' );
+        }
+
+        try {
+            $data = get_transient( $key );
+
+            if ( false === $data ) {
+                set_transient( $key, array( 'count' => 1, 'start' => $now ), $this->window_seconds );
+                return true;
+            }
+
+            if ( $data['count'] >= $this->max_requests ) {
+                $retry_after = $this->window_seconds - ( $now - $data['start'] );
+                return new WP_Error(
+                    'rate_limited',
+                    'Too many requests. Try again in ' . max( 1, $retry_after ) . ' seconds.'
+                );
+            }
+
+            $data['count']++;
+            $remaining_ttl = $this->window_seconds - ( $now - $data['start'] );
+            if ( $remaining_ttl > 0 ) {
+                set_transient( $key, $data, $remaining_ttl );
+            }
+
             return true;
+        } finally {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+            $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock ) );
         }
-
-        if ( $data['count'] >= $this->max_requests ) {
-            $retry_after = $this->window_seconds - ( $now - $data['start'] );
-            return new WP_Error(
-                'rate_limited',
-                'Too many requests. Try again in ' . max( 1, $retry_after ) . ' seconds.'
-            );
-        }
-
-        $data['count']++;
-        $remaining_ttl = $this->window_seconds - ( $now - $data['start'] );
-        if ( $remaining_ttl > 0 ) {
-            set_transient( $key, $data, $remaining_ttl );
-        }
-
-        return true;
     }
 
     private static function get_client_ip(): string {

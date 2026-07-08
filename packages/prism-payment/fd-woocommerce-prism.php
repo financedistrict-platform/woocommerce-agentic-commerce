@@ -37,12 +37,20 @@ function fd_prism_init() {
     // Register payment handler into UCP registry
     add_action('fd_ucp_register_payment_handlers', function(FD_Payment_Registry $registry) {
         $gateway = new FD_Prism_Gateway();
+        if ( 'yes' !== $gateway->enabled ) {
+            return;
+        }
         $api_url = $gateway->api_url();
         $api_key = $gateway->api_key();
         if (!empty($api_url) && !empty($api_key)) {
             $handler = new FD_Prism_Handler($api_url, $api_key);
             $registry->register($handler);
         }
+    });
+
+    // Flush discovery cache when Prism gateway settings are saved
+    add_action('woocommerce_update_options_payment_gateways_fd_prism_x402', function() {
+        delete_transient( 'fd_prism_discovery_cache' );
     });
 
     // Register WC gateway
