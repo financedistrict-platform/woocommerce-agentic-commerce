@@ -9,6 +9,13 @@ class FD_UCP_Installer {
         update_option( 'fd_ucp_db_version', FD_UCP_DB_VERSION );
     }
 
+    public static function maybe_upgrade(): void {
+        if ( get_option( 'fd_ucp_db_version' ) !== FD_UCP_DB_VERSION ) {
+            self::create_tables();
+            update_option( 'fd_ucp_db_version', FD_UCP_DB_VERSION );
+        }
+    }
+
     public static function deactivate(): void {
         flush_rewrite_rules();
     }

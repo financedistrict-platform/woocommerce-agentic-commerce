@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 define( 'FD_UCP_VERSION', '0.1.0' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'FD_UCP_DB_VERSION', '1.0.0' );
+define( 'FD_UCP_DB_VERSION', '1.1.0' );
 
 require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-installer.php';
 
@@ -48,6 +48,8 @@ function fd_ucp_init() {
         } );
         return;
     }
+
+    FD_UCP_Installer::maybe_upgrade();
 
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/interface-fd-payment-handler.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/class-fd-payment-registry.php';
