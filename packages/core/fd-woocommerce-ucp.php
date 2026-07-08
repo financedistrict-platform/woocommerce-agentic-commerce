@@ -67,6 +67,6 @@ function fd_ucp_init() {
     // so we match on $source_type in the label filter. The %.0s swallows the
     // formatted_source arg so sprintf produces only our label.
     add_filter( 'wc_order_attribution_origin_label', function ( string $label, string $source_type ): string {
-        return 'fd-ucp' === $source_type ? 'AI Agent (UCP)%.0s' : $label;
+        return 'fd-ucp' === $source_type ? 'AI Agent (FD Prism)%.0s' : $label;
     }, 10, 2 );
 }
