@@ -4,8 +4,8 @@ defined( 'ABSPATH' ) || exit;
 class FD_UCP_Formatter {
 
     private const UCP_VERSION  = '2026-04-08';
-    private const UCP_SPEC_BASE   = 'https://ucp.dev/specification/';
-    private const UCP_SCHEMA_BASE = 'https://ucp.dev/schemas/shopping/';
+    private const UCP_SPEC_BASE   = 'https://ucp.dev/' . self::UCP_VERSION . '/specification/';
+    private const UCP_SCHEMA_BASE = 'https://ucp.dev/' . self::UCP_VERSION . '/schemas/shopping/';
 
     public static function to_minor( float $amount ): int {
         return (int) round( $amount * 100 );
