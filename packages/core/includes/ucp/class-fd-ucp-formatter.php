@@ -42,7 +42,7 @@ class FD_UCP_Formatter {
                         'version' => self::UCP_VERSION,
                         'extends' => 'dev.ucp.shopping.checkout',
                     ) ),
-                    'dev.ucp.shopping.orders'          => array( array( 'version' => self::UCP_VERSION ) ),
+                    'dev.ucp.shopping.order'           => array( array( 'version' => self::UCP_VERSION ) ),
                 ),
                 'payment_handlers' => $registry->get_ucp_discovery_handlers(),
             ),

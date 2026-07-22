@@ -22,7 +22,7 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
                     'name'              => self::HANDLER_NS,
                     'version'           => '2026-01-01',
                     'type'              => 'custom',
-                    'config_schema'     => array(),
+                    'schema'            => array(),
                     'instrument_schemas' => array(),
                     'config'            => array(
                         'description' => 'Dummy payment handler for testing. Always succeeds.',

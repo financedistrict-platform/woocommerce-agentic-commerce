@@ -63,7 +63,7 @@ class FD_UCP_Order_Controller {
                 'version'      => '2026-04-08',
                 'status'       => 'success',
                 'capabilities' => array(
-                    'dev.ucp.shopping.orders' => array( array( 'version' => '2026-04-08' ) ),
+                    'dev.ucp.shopping.order' => array( array( 'version' => '2026-04-08' ) ),
                 ),
             ),
             'orders'     => $formatted,

@@ -51,9 +51,9 @@ class FD_Prism_Handler implements FD_Payment_Handler {
                 if ( empty( $entry['name'] ) ) {
                     $entry['name'] = $ns;
                 }
-                if ( isset( $entry['schema'] ) && ! isset( $entry['config_schema'] ) ) {
-                    $entry['config_schema'] = $entry['schema'];
-                    unset( $entry['schema'] );
+                if ( isset( $entry['config_schema'] ) && ! isset( $entry['schema'] ) ) {
+                    $entry['schema'] = $entry['config_schema'];
+                    unset( $entry['config_schema'] );
                 }
                 if ( ! isset( $entry['instrument_schemas'] ) ) {
                     $entry['instrument_schemas'] = array();
