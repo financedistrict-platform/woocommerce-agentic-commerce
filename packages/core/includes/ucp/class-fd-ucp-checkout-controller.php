@@ -432,7 +432,11 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'invalid_instrument', 'id, handler_id, type and credential are required', 400 );
         }
 
-        if ( is_array( $credential ) && empty( $credential['type'] ) ) {
+        if ( ! is_array( $credential ) || array_is_list( $credential ) ) {
+            return FD_UCP_Error::response( 'invalid_instrument', 'credential must be an object', 400 );
+        }
+
+        if ( empty( $credential['type'] ) ) {
             return FD_UCP_Error::response( 'invalid_instrument', 'credential.type is required', 400 );
         }
 

@@ -124,8 +124,19 @@ final class PrismHandlerTest extends TestCase {
         $this->assertNotNull( $this->handler()->validate_instrument( $instrument ) );
     }
 
-    public function test_validate_instrument_reads_type_from_base64_credential(): void {
+    public function test_validate_instrument_rejects_base64_string_credential(): void {
         $credential = base64_encode( json_encode( array( 'type' => 'x402', 'x402Version' => 2 ) ) );
-        $this->assertNull( $this->handler()->validate_instrument( self::instrument( array( 'credential' => $credential ) ) ) );
+        $this->assertNotNull( $this->handler()->validate_instrument( self::instrument( array( 'credential' => $credential ) ) ) );
+    }
+
+    public function test_validate_instrument_rejects_json_string_credential(): void {
+        $credential = json_encode( array( 'type' => 'x402', 'x402Version' => 2 ) );
+        $this->assertNotNull( $this->handler()->validate_instrument( self::instrument( array( 'credential' => $credential ) ) ) );
+    }
+
+    public function test_settle_payment_rejects_string_credential(): void {
+        $credential = base64_encode( json_encode( array( 'type' => 'x402', 'x402Version' => 2 ) ) );
+        $result     = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => $credential ) );
+        $this->assertFalse( $result['success'] );
     }
 }

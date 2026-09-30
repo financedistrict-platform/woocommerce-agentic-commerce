@@ -83,9 +83,7 @@ class FD_Prism_Handler implements FD_Payment_Handler {
 
     public function validate_instrument( array $instrument ): ?string {
         $credential      = $instrument['credential'] ?? null;
-        $credential_type = is_array( $credential )
-            ? ( $credential['type'] ?? null )
-            : ( $this->decode_credential( $credential )['type'] ?? null );
+        $credential_type = is_array( $credential ) ? ( $credential['type'] ?? null ) : null;
 
         if ( 'x402' !== ( $instrument['type'] ?? null ) || 'x402' !== $credential_type ) {
             return 'Prism instrument and credential type must be "x402"';
@@ -143,7 +141,6 @@ class FD_Prism_Handler implements FD_Payment_Handler {
     public function settle_payment( array $input ): array {
         $credential = $input['credential'];
 
-        // The credential may be a base64 string or a structured object
         $authorization = $this->decode_credential( $credential );
         if ( ! $authorization ) {
             return array(
@@ -232,40 +229,13 @@ class FD_Prism_Handler implements FD_Payment_Handler {
     // Helpers
     // =========================================================================
 
-    /**
-     * Decode an x402 credential from various wire formats.
-     * Returns the full x402 authorization object or null.
-     */
     private function decode_credential( $credential ): ?array {
-        if ( is_string( $credential ) ) {
-            // Try base64 decode
-            $decoded = base64_decode( $credential, true );
-            if ( $decoded ) {
-                $parsed = json_decode( $decoded, true );
-                if ( is_array( $parsed ) ) {
-                    return $parsed;
-                }
-            }
-            // Try direct JSON
-            $parsed = json_decode( $credential, true );
-            if ( is_array( $parsed ) ) {
-                return $parsed;
-            }
+        if ( ! is_array( $credential ) ) {
             return null;
         }
-
-        if ( is_array( $credential ) ) {
-            // If it has paymentPayload, it's already the full authorization
-            if ( isset( $credential['paymentPayload'] ) ) {
-                return $credential;
-            }
-            // If it has an authorization field, extract it
-            if ( isset( $credential['authorization'] ) ) {
-                return $this->decode_credential( $credential['authorization'] );
-            }
-            return $credential;
+        if ( is_array( $credential['authorization'] ?? null ) && ! isset( $credential['paymentPayload'] ) ) {
+            return $credential['authorization'];
         }
-
-        return null;
+        return $credential;
     }
 }
