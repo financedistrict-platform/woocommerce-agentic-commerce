@@ -60,10 +60,10 @@ class FD_UCP_Order_Controller {
 
         return new WP_REST_Response( array(
             'ucp' => array(
-                'version'      => '2026-04-08',
+                'version'      => FD_UCP_Formatter::UCP_VERSION,
                 'status'       => 'success',
                 'capabilities' => array(
-                    'dev.ucp.shopping.order' => array( array( 'version' => '2026-04-08' ) ),
+                    'dev.ucp.shopping.order' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
                 ),
             ),
             'orders'     => $formatted,

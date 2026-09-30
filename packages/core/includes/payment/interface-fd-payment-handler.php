@@ -41,6 +41,8 @@ interface FD_Payment_Handler {
      */
     public function settle_payment( array $input ): array;
 
+    public function validate_instrument( array $instrument ): ?string;
+
     /**
      * Return handler config for inclusion in checkout session responses.
      * Shape: [ '<handler_namespace>' => [ { id, version, config } ] ]

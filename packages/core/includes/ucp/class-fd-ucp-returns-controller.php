@@ -86,7 +86,7 @@ class FD_UCP_Returns_Controller {
 
 		return new WP_REST_Response( array(
 			'ucp'    => array(
-				'version' => '2026-04-08',
+				'version' => FD_UCP_Formatter::UCP_VERSION,
 				'status'  => 'success',
 			),
 			'refund' => array(
@@ -118,7 +118,7 @@ class FD_UCP_Returns_Controller {
 
 		return new WP_REST_Response( array(
 			'ucp'     => array(
-				'version' => '2026-04-08',
+				'version' => FD_UCP_Formatter::UCP_VERSION,
 				'status'  => 'success',
 			),
 			'refunds' => $refunds,

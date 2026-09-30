@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="#"><img src="https://img.shields.io/badge/PHP-8.1+-8892BF.svg" alt="PHP 8.1+"></a>
   <a href="#"><img src="https://img.shields.io/badge/WooCommerce-8.0+-96588A.svg" alt="WooCommerce 8.0+"></a>
-  <a href="https://ucp.dev"><img src="https://img.shields.io/badge/UCP-v2026--04--08-green.svg" alt="UCP v2026-04-08"></a>
+  <a href="https://ucp.dev"><img src="https://img.shields.io/badge/UCP-v2026--08--25-green.svg" alt="UCP v2026-08-25"></a>
 </p>
 
 ---
@@ -172,9 +172,10 @@ The discovery endpoint advertises these capabilities per the [UCP spec](https://
 | `dev.ucp.shopping.checkout` | Checkout session lifecycle |
 | `dev.ucp.shopping.fulfillment` | Shipping methods and addresses |
 | `dev.ucp.shopping.buyer_identity` | Buyer email and name |
-| `dev.ucp.shopping.promotions` | Discount codes |
 | `dev.ucp.shopping.orders` | Order retrieval |
 | `dev.ucp.shopping.returns` | Return requests |
+
+Discount codes are a WooCommerce-specific REST route (`/promotions/validate`, `/checkout-sessions/{id}/promotions`), not a UCP capability, so discovery does not advertise them.
 
 ## Custom Payment Handlers
 
@@ -194,6 +195,7 @@ interface FD_Payment_Handler {
     public function name(): string;                                        // e.g. "Stripe"
     public function get_ucp_discovery_handlers(): array;                   // advertised in /.well-known/ucp
     public function prepare_checkout_payment( array $input ): ?array;      // called when session is created
+    public function validate_instrument( array $instrument ): ?string;    // error message rejects complete before any order
     public function settle_payment( array $input ): array;                 // called on complete with credential
     public function get_ucp_checkout_handlers( ?array $metadata = null ): array;  // shapes checkout response
 }

@@ -101,11 +101,11 @@ class FD_UCP_Buyer_Identity_Controller {
 
 		return array(
 			'ucp'        => array(
-				'version'      => '2026-04-08',
+				'version'      => FD_UCP_Formatter::UCP_VERSION,
 				'status'       => 'success',
 				'capabilities' => array(
 					'dev.ucp.shopping.buyer_identity' => array( array(
-						'version' => '2026-04-08',
+						'version' => FD_UCP_Formatter::UCP_VERSION,
 						'extends' => 'dev.ucp.shopping.checkout',
 					) ),
 				),

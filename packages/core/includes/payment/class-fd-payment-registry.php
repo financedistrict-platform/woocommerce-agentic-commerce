@@ -49,6 +49,14 @@ class FD_Payment_Registry {
         return $handler->settle_payment( $input );
     }
 
+    public function validate_instrument( string $handler_id, array $instrument ): ?string {
+        $handler = $this->get( $handler_id );
+        if ( ! $handler ) {
+            return "Unknown payment handler: $handler_id";
+        }
+        return $handler->validate_instrument( $instrument );
+    }
+
     /**
      * Merge checkout handler configs from all handlers for response formatting.
      */

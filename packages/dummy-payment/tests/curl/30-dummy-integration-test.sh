@@ -180,8 +180,10 @@ COMPLETED=$(curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete" \
   -d "{
     \"payment\": {
       \"instruments\": [{
+        \"id\": \"inst_1\",
         \"handler_id\": \"$HANDLER_NS\",
-        \"credential\": {\"dummy\": true}
+        \"type\": \"dummy\",
+        \"credential\": {\"type\": \"dummy\", \"dummy\": true}
       }]
     }
   }")
