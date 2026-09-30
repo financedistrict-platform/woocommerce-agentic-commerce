@@ -3,7 +3,7 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Formatter {
 
-    private const UCP_VERSION = '2026-04-08';
+    public const UCP_VERSION = '2026-08-25';
 
     public static function to_minor( float $amount ): int {
         return (int) round( $amount * 100 );
@@ -30,24 +30,27 @@ class FD_UCP_Formatter {
                     ),
                 ),
                 'capabilities'     => array(
-                    'dev.ucp.shopping.cart'            => array( array( 'version' => self::UCP_VERSION ) ),
-                    'dev.ucp.shopping.catalog.search'  => array( array( 'version' => self::UCP_VERSION ) ),
-                    'dev.ucp.shopping.catalog.lookup'  => array( array( 'version' => self::UCP_VERSION ) ),
-                    'dev.ucp.shopping.checkout'        => array( array( 'version' => self::UCP_VERSION ) ),
-                    'dev.ucp.shopping.fulfillment'     => array( array(
-                        'version' => self::UCP_VERSION,
+                    'dev.ucp.shopping.cart'            => array( self::capability( 'specification/cart', 'schemas/shopping/cart.json' ) ),
+                    'dev.ucp.shopping.catalog.search'  => array( self::capability( 'specification/catalog/search', 'schemas/shopping/catalog_search.json' ) ),
+                    'dev.ucp.shopping.catalog.lookup'  => array( self::capability( 'specification/catalog/lookup', 'schemas/shopping/catalog_lookup.json' ) ),
+                    'dev.ucp.shopping.checkout'        => array( self::capability( 'specification/checkout', 'schemas/shopping/checkout.json' ) ),
+                    'dev.ucp.shopping.fulfillment'     => array( self::capability( 'specification/fulfillment', 'schemas/shopping/fulfillment.json' ) + array(
                         'extends' => 'dev.ucp.shopping.checkout',
                     ) ),
-                    'dev.ucp.shopping.promotions'      => array( array(
-                        'version' => self::UCP_VERSION,
-                        'extends' => 'dev.ucp.shopping.checkout',
-                    ) ),
-                    'dev.ucp.shopping.order'           => array( array( 'version' => self::UCP_VERSION ) ),
+                    'dev.ucp.shopping.order'           => array( self::capability( 'specification/order', 'schemas/shopping/order.json' ) ),
                 ),
                 'payment_handlers' => $registry->get_ucp_discovery_handlers(),
             ),
             'name'         => $store_name,
-            'signing_keys' => array(),
+        );
+    }
+
+    private static function capability( string $spec_path, string $schema_path ): array {
+        $base = 'https://ucp.dev/' . self::UCP_VERSION . '/';
+        return array(
+            'version' => self::UCP_VERSION,
+            'spec'    => $base . $spec_path,
+            'schema'  => $base . $schema_path,
         );
     }
 

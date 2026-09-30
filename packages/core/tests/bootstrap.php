@@ -66,9 +66,32 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
     }
 }
 
+if ( ! function_exists( 'get_bloginfo' ) ) {
+    function get_bloginfo( string $show = '' ): string {
+        return 'Test Store';
+    }
+}
+
+if ( ! function_exists( 'add_action' ) ) {
+    function add_action( ...$args ): bool {
+        return true;
+    }
+}
+
+if ( ! function_exists( 'add_filter' ) ) {
+    function add_filter( ...$args ): bool {
+        return true;
+    }
+}
+
 // Load testable domain classes
 $base = dirname( __DIR__ ) . '/includes';
 
 require_once $base . '/ucp/class-fd-ucp-address.php';
 require_once $base . '/ucp/class-fd-ucp-status.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
+require_once $base . '/ucp/class-fd-ucp-formatter.php';
+require_once $base . '/ucp/class-fd-ucp-discovery.php';
+require_once $base . '/payment/interface-fd-payment-handler.php';
+require_once $base . '/payment/class-fd-payment-registry.php';
+require_once $base . '/class-fd-ucp-plugin.php';

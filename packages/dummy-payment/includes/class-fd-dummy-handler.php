@@ -23,7 +23,6 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
                     'version'           => '2026-01-01',
                     'type'              => 'custom',
                     'schema'            => array(),
-                    'instrument_schemas' => array(),
                     'config'            => array(
                         'description' => 'Dummy payment handler for testing. Always succeeds.',
                         'accepts'     => array(
@@ -105,6 +104,10 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
                 '_fd_dummy_network' => 'dummy:testnet',
             ),
         );
+    }
+
+    public function validate_instrument( array $instrument ): ?string {
+        return null;
     }
 
     public function get_ucp_checkout_handlers( ?array $payment_meta = null ): array {

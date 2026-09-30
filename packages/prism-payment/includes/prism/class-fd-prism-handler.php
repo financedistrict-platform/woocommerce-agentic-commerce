@@ -27,40 +27,70 @@ class FD_Prism_Handler implements FD_Payment_Handler {
 
     public function get_ucp_discovery_handlers(): array {
         $cached = get_transient( self::CACHE_KEY );
-        if ( false !== $cached ) {
-            return $cached;
+        if ( false !== $cached && $this->contract_entry_ok( $cached ) ) {
+            return $this->as_wire( $cached );
         }
 
         $handlers = $this->client->fetch_ucp_handlers();
-        if ( ! $handlers ) {
-            $stale = get_option( '_fd_prism_discovery_stale', array() );
-            return $stale;
+        if ( $handlers ) {
+            $violation = $this->contract_violation( $handlers );
+            if ( null === $violation ) {
+                set_transient( self::CACHE_KEY, $handlers, self::CACHE_TTL );
+                update_option( '_fd_prism_discovery_stale', $handlers, false );
+                return $this->as_wire( $handlers );
+            }
+            error_log( 'fd-prism: Prism handlers entry rejected, missing or invalid field: ' . $violation );
         }
 
-        $handlers = $this->normalize_handler_entries( $handlers );
+        $stale = get_option( '_fd_prism_discovery_stale', array() );
+        if ( is_array( $stale ) && $this->contract_entry_ok( $stale ) ) {
+            return $this->as_wire( $stale );
+        }
 
-        set_transient( self::CACHE_KEY, $handlers, self::CACHE_TTL );
-        update_option( '_fd_prism_discovery_stale', $handlers, false );
-
-        return $handlers;
+        return array();
     }
 
-    private function normalize_handler_entries( array $handlers ): array {
-        foreach ( $handlers as $ns => &$entries ) {
-            foreach ( $entries as &$entry ) {
-                if ( empty( $entry['name'] ) ) {
-                    $entry['name'] = $ns;
-                }
-                if ( isset( $entry['config_schema'] ) && ! isset( $entry['schema'] ) ) {
-                    $entry['schema'] = $entry['config_schema'];
-                    unset( $entry['config_schema'] );
-                }
-                if ( ! isset( $entry['instrument_schemas'] ) ) {
-                    $entry['instrument_schemas'] = array();
+    private function contract_entry_ok( $handlers ): bool {
+        return null === $this->contract_violation( $handlers );
+    }
+
+    private function contract_violation( $handlers ): ?string {
+        $entry = is_array( $handlers ) ? ( $handlers[ self::HANDLER_ID ][0] ?? null ) : null;
+        if ( ! is_array( $entry ) ) {
+            return self::HANDLER_ID . '[0]';
+        }
+        if ( ( $entry['id'] ?? null ) !== self::HANDLER_ID ) {
+            return 'id';
+        }
+        foreach ( array( 'version', 'schema', 'spec' ) as $field ) {
+            if ( ! is_string( $entry[ $field ] ?? null ) || '' === $entry[ $field ] ) {
+                return $field;
+            }
+        }
+        return null;
+    }
+
+    private function as_wire( array $handlers ): array {
+        foreach ( $handlers as $ns => $entries ) {
+            foreach ( $entries as $i => $entry ) {
+                if ( is_array( $entry['config'] ?? null ) ) {
+                    $handlers[ $ns ][ $i ]['config'] = (object) $entry['config'];
                 }
             }
         }
         return $handlers;
+    }
+
+    public function validate_instrument( array $instrument ): ?string {
+        $credential      = $instrument['credential'] ?? null;
+        $credential_type = is_array( $credential )
+            ? ( $credential['type'] ?? null )
+            : ( $this->decode_credential( $credential )['type'] ?? null );
+
+        if ( 'x402' !== ( $instrument['type'] ?? null ) || 'x402' !== $credential_type ) {
+            return 'Prism instrument and credential type must be "x402"';
+        }
+        return null;
     }
 
     // =========================================================================

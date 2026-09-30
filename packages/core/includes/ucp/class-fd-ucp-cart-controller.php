@@ -4,7 +4,6 @@ defined( 'ABSPATH' ) || exit;
 class FD_UCP_Cart_Controller {
 
 	private const NAMESPACE = 'fd-ucp/v1';
-	private const UCP_VERSION = '2026-04-08';
 
 	public function register_routes(): void {
 		register_rest_route( self::NAMESPACE, '/carts', array(
@@ -238,10 +237,10 @@ class FD_UCP_Cart_Controller {
 
 		return new WP_REST_Response( array(
 			'ucp'          => array(
-				'version'      => self::UCP_VERSION,
+				'version'      => FD_UCP_Formatter::UCP_VERSION,
 				'status'       => 'success',
 				'capabilities' => array(
-					'dev.ucp.shopping.cart' => array( array( 'version' => self::UCP_VERSION ) ),
+					'dev.ucp.shopping.cart' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
 				),
 			),
 			'checkout_session_id' => $session_id,
@@ -279,10 +278,10 @@ class FD_UCP_Cart_Controller {
 	private function format_cart_response( string $cart_id, array $line_items, int $subtotal, string $currency ): array {
 		return array(
 			'ucp'        => array(
-				'version'      => self::UCP_VERSION,
+				'version'      => FD_UCP_Formatter::UCP_VERSION,
 				'status'       => 'success',
 				'capabilities' => array(
-					'dev.ucp.shopping.cart' => array( array( 'version' => self::UCP_VERSION ) ),
+					'dev.ucp.shopping.cart' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
 				),
 			),
 			'id'         => $cart_id,

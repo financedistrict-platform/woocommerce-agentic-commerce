@@ -428,8 +428,17 @@ class FD_UCP_Checkout_Controller {
         $handler_id = $instrument['handler_id'] ?? '';
         $credential = $instrument['credential'] ?? null;
 
-        if ( ! $handler_id || ! $credential ) {
-            return FD_UCP_Error::response( 'invalid_instrument', 'handler_id and credential are required', 400 );
+        if ( empty( $instrument['id'] ) || ! is_string( $handler_id ) || ! $handler_id || empty( $instrument['type'] ) || ! $credential ) {
+            return FD_UCP_Error::response( 'invalid_instrument', 'id, handler_id, type and credential are required', 400 );
+        }
+
+        if ( is_array( $credential ) && empty( $credential['type'] ) ) {
+            return FD_UCP_Error::response( 'invalid_instrument', 'credential.type is required', 400 );
+        }
+
+        $instrument_error = $this->registry->validate_instrument( $handler_id, $instrument );
+        if ( null !== $instrument_error ) {
+            return FD_UCP_Error::response( 'invalid_instrument', $instrument_error, 400 );
         }
 
         $payment_meta = json_decode( $session['payment_meta'] ?? '{}', true );

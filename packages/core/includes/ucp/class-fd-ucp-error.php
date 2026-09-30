@@ -6,7 +6,7 @@ class FD_UCP_Error {
     public static function response( string $code, string $message, int $http_status = 400 ): WP_REST_Response {
         $body = array(
             'ucp'      => array(
-                'version' => '2026-04-08',
+                'version' => FD_UCP_Formatter::UCP_VERSION,
                 'status'  => 'error',
             ),
             'messages' => array(

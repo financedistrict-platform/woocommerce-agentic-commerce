@@ -52,10 +52,10 @@ class FD_UCP_Catalog_Controller {
 
         return new WP_REST_Response( array(
             'ucp'        => array(
-                'version'      => '2026-04-08',
+                'version'      => FD_UCP_Formatter::UCP_VERSION,
                 'status'       => 'success',
                 'capabilities' => array(
-                    'dev.ucp.shopping.catalog.search' => array( array( 'version' => '2026-04-08' ) ),
+                    'dev.ucp.shopping.catalog.search' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
                 ),
             ),
             'products'   => $formatted,
@@ -85,10 +85,10 @@ class FD_UCP_Catalog_Controller {
 
         return new WP_REST_Response( array(
             'ucp'      => array(
-                'version'      => '2026-04-08',
+                'version'      => FD_UCP_Formatter::UCP_VERSION,
                 'status'       => 'success',
                 'capabilities' => array(
-                    'dev.ucp.shopping.catalog.lookup' => array( array( 'version' => '2026-04-08' ) ),
+                    'dev.ucp.shopping.catalog.lookup' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
                 ),
             ),
             'products' => $products,

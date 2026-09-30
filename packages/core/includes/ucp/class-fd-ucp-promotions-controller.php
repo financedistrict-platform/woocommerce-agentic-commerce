@@ -35,7 +35,7 @@ class FD_UCP_Promotions_Controller {
 
 		$valid   = $coupon->is_valid();
 		$result  = array(
-			'ucp'           => array( 'version' => '2026-04-08', 'status' => 'success' ),
+			'ucp'           => array( 'version' => FD_UCP_Formatter::UCP_VERSION, 'status' => 'success' ),
 			'code'          => $coupon->get_code(),
 			'discount_type' => $coupon->get_discount_type(),
 			'amount'        => $coupon->get_amount(),
@@ -142,7 +142,7 @@ class FD_UCP_Promotions_Controller {
 		) );
 
 		return new WP_REST_Response( array(
-			'ucp'    => array( 'version' => '2026-04-08', 'status' => 'success' ),
+			'ucp'    => array( 'version' => FD_UCP_Formatter::UCP_VERSION, 'status' => 'success' ),
 			'id'     => $session['id'],
 			'totals' => $new_totals,
 			'promotion_applied' => array(
