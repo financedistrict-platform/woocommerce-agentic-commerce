@@ -4,20 +4,9 @@ defined( 'ABSPATH' ) || exit;
 class FD_UCP_Error {
 
     public static function response( string $code, string $message, int $http_status = 400 ): WP_REST_Response {
-        $body = array(
-            'ucp'      => array(
-                'version' => FD_UCP_Formatter::UCP_VERSION,
-                'status'  => 'error',
-            ),
-            'messages' => array(
-                array(
-                    'type'     => 'error',
-                    'code'     => $code,
-                    'content'  => $message,
-                    'severity' => 'fatal',
-                ),
-            ),
+        return new WP_REST_Response(
+            FD_UCP_Request_Context::current()->wire()->error( $code, $message ),
+            $http_status
         );
-        return new WP_REST_Response( $body, $http_status );
     }
 }

@@ -88,6 +88,7 @@ class FD_UCP_Cart_Controller {
 			'id'                => $cart_id,
 			'line_items'        => wp_json_encode( $formatted_items ),
 			'agent_fingerprint' => $this->compute_fingerprint( $request ),
+			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
 			'created_at'        => $now,
 			'updated_at'        => $now,
 		) );
@@ -113,6 +114,11 @@ class FD_UCP_Cart_Controller {
 			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
 		}
 
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
+		}
+
 		$line_items    = json_decode( $cart['line_items'], true );
 		$cart_subtotal = $this->sum_subtotals( $line_items );
 
@@ -135,6 +141,11 @@ class FD_UCP_Cart_Controller {
 		$ownership = $this->verify_cart_ownership( $request, $cart );
 		if ( is_wp_error( $ownership ) ) {
 			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+		}
+
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
 		}
 
 		$body       = $request->get_json_params();
@@ -202,6 +213,11 @@ class FD_UCP_Cart_Controller {
 			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
 		}
 
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
+		}
+
 		$line_items    = json_decode( $cart['line_items'], true );
 		$currency      = get_woocommerce_currency();
 		$session_id    = wp_generate_uuid4();
@@ -226,6 +242,7 @@ class FD_UCP_Cart_Controller {
 			'fulfillment'       => null,
 			'payment_meta'      => null,
 			'agent_fingerprint' => $cart['agent_fingerprint'],
+			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
 			'created_at'        => $now,
 			'updated_at'        => $now,
 			'expires_at'        => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
@@ -236,13 +253,7 @@ class FD_UCP_Cart_Controller {
 		$checkout_url = home_url( '/wp-json/' . self::NAMESPACE . '/checkout-sessions/' . $session_id );
 
 		return new WP_REST_Response( array(
-			'ucp'          => array(
-				'version'      => FD_UCP_Formatter::UCP_VERSION,
-				'status'       => 'success',
-				'capabilities' => array(
-					'dev.ucp.shopping.cart' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
-				),
-			),
+			'ucp'          => FD_UCP_Request_Context::current()->wire()->envelope( array( 'cart' ) ),
 			'checkout_session_id' => $session_id,
 			'checkout_url'        => $checkout_url,
 			'line_items'          => $line_items,
@@ -266,6 +277,11 @@ class FD_UCP_Cart_Controller {
 			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
 		}
 
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
+		}
+
 		$this->delete_cart_row( $cart['id'] );
 
 		return new WP_REST_Response( null, 204 );
@@ -277,19 +293,11 @@ class FD_UCP_Cart_Controller {
 
 	private function format_cart_response( string $cart_id, array $line_items, int $subtotal, string $currency ): array {
 		return array(
-			'ucp'        => array(
-				'version'      => FD_UCP_Formatter::UCP_VERSION,
-				'status'       => 'success',
-				'capabilities' => array(
-					'dev.ucp.shopping.cart' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
-				),
-			),
+			'ucp'        => FD_UCP_Request_Context::current()->wire()->envelope( array( 'cart' ) ),
 			'id'         => $cart_id,
 			'currency'   => $currency,
 			'line_items' => $line_items,
-			'totals'     => array(
-				array( 'type' => 'subtotal', 'amount' => $subtotal ),
-			),
+			'totals'     => FD_UCP_Request_Context::current()->wire()->cart_totals( $subtotal ),
 		);
 	}
 

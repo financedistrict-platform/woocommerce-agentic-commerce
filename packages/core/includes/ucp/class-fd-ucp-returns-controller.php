@@ -85,10 +85,7 @@ class FD_UCP_Returns_Controller {
 		}
 
 		return new WP_REST_Response( array(
-			'ucp'    => array(
-				'version' => FD_UCP_Formatter::UCP_VERSION,
-				'status'  => 'success',
-			),
+			'ucp'    => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
 			'refund' => array(
 				'id'     => (string) $refund->get_id(),
 				'amount' => FD_UCP_Formatter::to_minor( (float) $refund->get_amount() ),
@@ -117,10 +114,7 @@ class FD_UCP_Returns_Controller {
 		}
 
 		return new WP_REST_Response( array(
-			'ucp'     => array(
-				'version' => FD_UCP_Formatter::UCP_VERSION,
-				'status'  => 'success',
-			),
+			'ucp'     => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
 			'refunds' => $refunds,
 		), 200 );
 	}

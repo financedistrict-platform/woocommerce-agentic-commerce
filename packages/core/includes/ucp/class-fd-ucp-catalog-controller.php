@@ -51,13 +51,7 @@ class FD_UCP_Catalog_Controller {
         $total                 = count( wc_get_products( $count_args ) );
 
         return new WP_REST_Response( array(
-            'ucp'        => array(
-                'version'      => FD_UCP_Formatter::UCP_VERSION,
-                'status'       => 'success',
-                'capabilities' => array(
-                    'dev.ucp.shopping.catalog.search' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
-                ),
-            ),
+            'ucp'        => FD_UCP_Request_Context::current()->wire()->envelope( array( 'catalog.search' ) ),
             'products'   => $formatted,
             'pagination' => array(
                 'total_count'   => $total,
@@ -84,13 +78,7 @@ class FD_UCP_Catalog_Controller {
         }
 
         return new WP_REST_Response( array(
-            'ucp'      => array(
-                'version'      => FD_UCP_Formatter::UCP_VERSION,
-                'status'       => 'success',
-                'capabilities' => array(
-                    'dev.ucp.shopping.catalog.lookup' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
-                ),
-            ),
+            'ucp'      => FD_UCP_Request_Context::current()->wire()->envelope( array( 'catalog.lookup' ) ),
             'products' => $products,
             'messages' => array(),
         ), 200 );

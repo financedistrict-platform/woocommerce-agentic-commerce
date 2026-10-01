@@ -60,6 +60,10 @@ class FD_UCP_Checkout_Controller {
         if ( $idempotency_key ) {
             $existing = $this->load_session_by_idempotency_key( $idempotency_key );
             if ( $existing ) {
+                $pin = FD_UCP_Plugin::instance()->pin_session( $request, $existing['ucp_version'] ?? null );
+                if ( null !== $pin ) {
+                    return $pin;
+                }
                 return new WP_REST_Response(
                     FD_UCP_Formatter::format_checkout_session( $existing, $this->registry ),
                     200
@@ -179,6 +183,7 @@ class FD_UCP_Checkout_Controller {
             'wc_order_id'      => $order_id,
             'agent_fingerprint' => $this->compute_fingerprint( $request ),
             'idempotency_key'  => $idempotency_key,
+            'ucp_version'      => FD_UCP_Request_Context::current()->session_pin(),
             'created_at'       => $now,
             'updated_at'       => $now,
             'expires_at'       => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
@@ -202,6 +207,11 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
 
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
+        }
+
         return new WP_REST_Response(
             FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
             200
@@ -216,6 +226,11 @@ class FD_UCP_Checkout_Controller {
         $session = $this->load_session( $request->get_param( 'id' ) );
         if ( ! $session ) {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
+        }
+
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
         }
 
         $ownership = $this->verify_ownership( $request, $session );
@@ -396,6 +411,11 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
 
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
+        }
+
         $ownership = $this->verify_ownership( $request, $session );
         if ( is_wp_error( $ownership ) ) {
             return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
@@ -425,20 +445,13 @@ class FD_UCP_Checkout_Controller {
         }
 
         $instrument = $payment['instruments'][0];
-        $handler_id = $instrument['handler_id'] ?? '';
-        $credential = $instrument['credential'] ?? null;
-
-        if ( empty( $instrument['id'] ) || ! is_string( $handler_id ) || ! $handler_id || empty( $instrument['type'] ) || ! $credential ) {
-            return FD_UCP_Error::response( 'invalid_instrument', 'id, handler_id, type and credential are required', 400 );
+        $guard      = self::instrument_error( is_array( $instrument ) ? $instrument : array() );
+        if ( null !== $guard ) {
+            return FD_UCP_Error::response( 'invalid_instrument', $guard, 400 );
         }
 
-        if ( ! is_array( $credential ) || array_is_list( $credential ) ) {
-            return FD_UCP_Error::response( 'invalid_instrument', 'credential must be an object', 400 );
-        }
-
-        if ( empty( $credential['type'] ) ) {
-            return FD_UCP_Error::response( 'invalid_instrument', 'credential.type is required', 400 );
-        }
+        $handler_id = $this->registry->canonical_id( $instrument['handler_id'] );
+        $credential = $instrument['credential'];
 
         $instrument_error = $this->registry->validate_instrument( $handler_id, $instrument );
         if ( null !== $instrument_error ) {
@@ -476,7 +489,12 @@ class FD_UCP_Checkout_Controller {
             'checkout_meta' => $payment_meta,
         );
 
-        $result = $this->registry->settle( $handler_id, $settle_input );
+        try {
+            $result = $this->registry->settle( $handler_id, $settle_input );
+        } catch ( Throwable $e ) {
+            $this->update_session_row( $session['id'], array( 'status' => 'incomplete' ) );
+            return FD_UCP_Error::response( 'payment_failed', 'Payment settlement failed', 422 );
+        }
 
         if ( empty( $result['success'] ) ) {
             $this->update_session_row( $session['id'], array( 'status' => 'incomplete' ) );
@@ -508,6 +526,11 @@ class FD_UCP_Checkout_Controller {
         $session = $this->load_session( $request->get_param( 'id' ) );
         if ( ! $session ) {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
+        }
+
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
         }
 
         $ownership = $this->verify_ownership( $request, $session );
@@ -694,6 +717,19 @@ class FD_UCP_Checkout_Controller {
         $order->calculate_totals();
         $order->save();
         $order->payment_complete( $tx_ref );
+    }
+
+    public static function instrument_error( array $instrument ): ?string {
+        $handler_id = $instrument['handler_id'] ?? '';
+        $credential = $instrument['credential'] ?? null;
+
+        if ( ! is_string( $handler_id ) || '' === $handler_id || ! $credential ) {
+            return 'handler_id and credential are required';
+        }
+        if ( ! is_string( $credential ) && ( ! is_array( $credential ) || array_is_list( $credential ) ) ) {
+            return 'credential must be an object or an encoded string';
+        }
+        return null;
     }
 
     private function verify_ownership( WP_REST_Request $request, array $session ): true|WP_Error {

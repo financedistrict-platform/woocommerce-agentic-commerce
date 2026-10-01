@@ -5,8 +5,17 @@ use PHPUnit\Framework\TestCase;
 
 final class FormatterProfileTest extends TestCase {
 
+    protected function setUp(): void {
+        FD_Test_WP::reset();
+    }
+
     private function profile(): array {
-        return FD_UCP_Formatter::format_profile( 'https://store.test/wp-json/fd-ucp/v1', new FD_Payment_Registry() );
+        return ( new FD_UCP_Version_Registry() )->wire( '2026-08-25' )->profile( 'https://store.test/wp-json/fd-ucp/v1', new FD_Payment_Registry(), array() );
+    }
+
+    public function test_default_profile_declares_ucp_version(): void {
+        $profile = FD_UCP_Formatter::format_profile( 'https://store.test/wp-json/fd-ucp/v1', new FD_Payment_Registry() );
+        $this->assertSame( '2026-04-08', $profile['ucp']['version'] );
     }
 
     public function test_profile_declares_ucp_version(): void {
@@ -33,5 +42,9 @@ final class FormatterProfileTest extends TestCase {
                 $this->assertStringStartsWith( 'https://ucp.dev/2026-08-25/schemas/shopping/', $entry['schema'], $name );
             }
         }
+    }
+
+    public function test_empty_payment_handlers_render_as_object(): void {
+        $this->assertSame( '{}', json_encode( $this->profile()['ucp']['payment_handlers'] ) );
     }
 }
