@@ -1,0 +1,67 @@
+{
+    "ucp": {
+        "version": "2026-01-23",
+        "services": {
+            "dev.ucp.shopping": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/overview",
+                    "transport": "rest",
+                    "schema": "https://ucp.dev/2026-01-23/services/shopping/rest.openapi.json",
+                    "endpoint": "https://store.test/wp-json/fd-ucp/v1"
+                }
+            ]
+        },
+        "capabilities": {
+            "dev.ucp.shopping.checkout": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/checkout/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/checkout.json"
+                }
+            ],
+            "dev.ucp.shopping.fulfillment": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/fulfillment/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/fulfillment.json",
+                    "extends": "dev.ucp.shopping.checkout"
+                }
+            ],
+            "dev.ucp.shopping.buyer_identity": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/buyer-identity/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/buyer-identity.json",
+                    "extends": "dev.ucp.shopping.checkout"
+                }
+            ],
+            "dev.ucp.shopping.promotions": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/discount/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/discount.json",
+                    "extends": "dev.ucp.shopping.checkout"
+                }
+            ],
+            "dev.ucp.shopping.orders": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/order/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/order.json"
+                }
+            ],
+            "dev.ucp.shopping.returns": [
+                {
+                    "version": "2026-01-23",
+                    "spec": "https://ucp.dev/2026-01-23/specification/returns/",
+                    "schema": "https://ucp.dev/2026-01-23/schemas/shopping/returns.json",
+                    "extends": "dev.ucp.shopping.orders"
+                }
+            ]
+        },
+        "payment_handlers": {}
+    },
+    "name": "Demo Store",
+    "signing_keys": []
+}
