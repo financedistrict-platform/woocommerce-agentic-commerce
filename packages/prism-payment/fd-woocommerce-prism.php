@@ -3,7 +3,7 @@
  * Plugin Name: Finance District Prism Payment
  * Plugin URI: https://developers.fd.xyz
  * Description: Stablecoin payment handler for WooCommerce UCP via Finance District Prism.
- * Version: 0.2.0
+ * Version: 0.3.0
  * Author: Finance District (1st Digital)
  * Author URI: https://fd.xyz
  * Requires at least: 6.4
@@ -16,6 +16,8 @@
  */
 defined('ABSPATH') || exit;
 
+define( 'FD_PRISM_VERSION', '0.3.0' );
+
 add_action( 'before_woocommerce_init', function () {
     if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
         \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
@@ -25,9 +27,9 @@ add_action( 'before_woocommerce_init', function () {
 add_action('plugins_loaded', 'fd_prism_init', 25); // after UCP plugin at priority 20
 
 function fd_prism_init() {
-    if (!class_exists('FD_UCP_Plugin')) {
+    if (!class_exists('FD_UCP_Plugin') || !interface_exists('FD_Versioned_Payment_Handler')) {
         add_action('admin_notices', function() {
-            echo '<div class="error"><p><strong>' . esc_html__( 'Finance District Prism', 'fd-prism-for-woocommerce' ) . '</strong> ' . esc_html__( 'requires the UCP plugin (fd-ucp-for-woocommerce) to be installed and active.', 'fd-prism-for-woocommerce' ) . '</p></div>';
+            echo '<div class="error"><p><strong>' . esc_html__( 'Finance District Prism', 'fd-prism-for-woocommerce' ) . '</strong> ' . esc_html__( 'requires the UCP plugin (fd-ucp-for-woocommerce) in a matching version to be installed and active.', 'fd-prism-for-woocommerce' ) . '</p></div>';
         });
         return;
     }
@@ -64,10 +66,14 @@ function fd_prism_init() {
         }
     });
 
-    // Flush discovery cache when Prism gateway settings are saved
+    fd_prism_maybe_upgrade();
+
     add_action('woocommerce_update_options_payment_gateways_fd_prism_x402', function() {
-        delete_transient( 'fd_prism_discovery_cache' );
-    });
+        $api_url = ( new FD_Prism_Gateway() )->api_url();
+        foreach ( FD_UCP_Version_Registry::known() as $ucp_version ) {
+            delete_transient( FD_Prism_Handler::cache_key( $api_url, $ucp_version ) );
+        }
+    }, 20);
 
     // Register WC gateway
     add_filter('woocommerce_payment_gateways', function(array $gateways) {
@@ -79,4 +85,13 @@ function fd_prism_init() {
     if (is_admin()) {
         FD_Prism_Order_Meta_Box::init();
     }
+}
+
+function fd_prism_maybe_upgrade() {
+    if ( get_option( 'fd_prism_version' ) === FD_PRISM_VERSION ) {
+        return;
+    }
+    delete_option( '_fd_prism_discovery_stale' );
+    delete_transient( 'fd_prism_discovery_cache' );
+    update_option( 'fd_prism_version', FD_PRISM_VERSION );
 }

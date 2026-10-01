@@ -14,8 +14,9 @@ class FD_Prism_Client {
     /**
      * GET /api/v2/merchant/ucp/handlers — UCP discovery entries.
      */
-    public function fetch_ucp_handlers(): ?array {
-        return $this->get( '/api/v2/merchant/ucp/handlers' );
+    public function fetch_ucp_handlers( ?string $ucp_version = null ): ?array {
+        $query = null === $ucp_version ? '' : '?ucp_version=' . rawurlencode( $ucp_version );
+        return $this->get( '/api/v2/merchant/ucp/handlers' . $query );
     }
 
     /**
@@ -56,10 +57,7 @@ class FD_Prism_Client {
 
     private function get( string $path ): ?array {
         $response = wp_remote_get( $this->api_url . $path, array(
-            'headers' => array(
-                'X-API-Key'    => $this->api_key,
-                'Content-Type' => 'application/json',
-            ),
+            'headers' => $this->headers(),
             'timeout' => 15,
         ) );
 
@@ -68,15 +66,20 @@ class FD_Prism_Client {
 
     private function post( string $path, array $body ): ?array {
         $response = wp_remote_post( $this->api_url . $path, array(
-            'headers' => array(
-                'X-API-Key'    => $this->api_key,
-                'Content-Type' => 'application/json',
-            ),
+            'headers' => $this->headers(),
             'body'    => wp_json_encode( $body ),
             'timeout' => 30,
         ) );
 
         return $this->parse_response( $response, "POST $path" );
+    }
+
+    public function headers(): array {
+        return array(
+            'X-API-Key'    => $this->api_key,
+            'Content-Type' => 'application/json',
+            'User-Agent'   => 'fd-woocommerce-prism/' . FD_PRISM_VERSION,
+        );
     }
 
     private function parse_response( $response, string $context ): ?array {
