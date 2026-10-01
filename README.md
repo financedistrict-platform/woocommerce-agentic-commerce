@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="#"><img src="https://img.shields.io/badge/PHP-8.1+-8892BF.svg" alt="PHP 8.1+"></a>
   <a href="#"><img src="https://img.shields.io/badge/WooCommerce-8.0+-96588A.svg" alt="WooCommerce 8.0+"></a>
-  <a href="https://ucp.dev"><img src="https://img.shields.io/badge/UCP-v2026--08--25-green.svg" alt="UCP v2026-08-25"></a>
+  <a href="https://ucp.dev"><img src="https://img.shields.io/badge/UCP-2026--04--08%20%7C%202026--08--25%20%7C%202026--01--23-green.svg" alt="UCP 2026-04-08, 2026-08-25, 2026-01-23"></a>
 </p>
 
 ---
@@ -111,6 +111,24 @@ Activate **UCP Core** first, then any payment handlers. Handlers hook into UCP a
 2. Find **Prism Stablecoin** > **Manage**
 3. Enter your **Prism Gateway URL** and **API Key**
 4. Save
+
+### UCP versions
+
+**WooCommerce > Settings > Advanced > UCP versions** sets which Universal Commerce Protocol (UCP) versions agents can use.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `fd_ucp_version` | `2026-04-08` | Version served when the agent does not ask for another one |
+| `fd_ucp_supported_versions` | `2026-08-25`, `2026-01-23` | Extra versions, listed in `ucp.supported_versions` and served at `/.well-known/ucp/<version>` |
+| `fd_ucp_version_negotiation` | `lenient` | `lenient` or `strict` (see below) |
+
+The store reads the agent profile URL from the `UCP-Agent` header (`profile="https://..."`) and uses the `ucp.version` it declares. A checkout session or cart keeps the version it was created with; a later request that declares a different version gets `422 version_unsupported`.
+
+The profile fetch only goes to public HTTPS hosts, has a 3 second timeout and a 64 KiB limit, and is cached for 10 minutes in the WordPress object cache (only within one request when the site has no persistent object cache). A checkout session or cart is pinned only when the agent profile declared a version the store serves; sessions created on a fallback keep following the agent.
+
+**Lenient mode deviates from the UCP spec on purpose.** The spec says a business MUST reject a request whose agent profile cannot be read or declares no known version. Lenient mode serves the current version instead and logs a `ucp_profile_resolution` warning (WooCommerce > Status > Logs, source `fd-ucp`). It never rejects an agent that works with 0.1.0. A version the owner disabled is always rejected with `422 version_unsupported`. Use `strict` to follow the spec exactly (`424 agent_profile_unavailable` or `422 version_unsupported`).
+
+An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 configuration_invalid` and shows an admin notice. The rest of the shop keeps working.
 
 ### Prism Console Setup
 
