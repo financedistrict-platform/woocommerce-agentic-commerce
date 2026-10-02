@@ -14,16 +14,15 @@ class FD_Prism_Client {
     /**
      * GET /api/v2/merchant/ucp/handlers — UCP discovery entries.
      */
-    public function fetch_ucp_handlers( ?string $ucp_version = null ): ?array {
-        $query = null === $ucp_version ? '' : '?ucp_version=' . rawurlencode( $ucp_version );
-        return $this->get( '/api/v2/merchant/ucp/handlers' . $query );
+    public function fetch_ucp_handlers( string $ucp_version ): ?array {
+        return $this->get( '/api/v2/merchant/ucp/handlers', $ucp_version );
     }
 
     /**
      * POST /api/v2/merchant/ucp/payment-requirements — UCP checkout prepare.
      * Amount in major fiat units (e.g. "15.00").
      */
-    public function prepare_ucp_payment( string $amount, string $currency, string $resource_url, string $description ): ?array {
+    public function prepare_ucp_payment( string $amount, string $currency, string $resource_url, string $description, string $ucp_version ): ?array {
         return $this->post( '/api/v2/merchant/ucp/payment-requirements', array(
             'amount'   => $amount,
             'currency' => $currency,
@@ -31,42 +30,42 @@ class FD_Prism_Client {
                 'url'         => $resource_url,
                 'description' => $description,
             ),
-        ) );
+        ), $ucp_version );
     }
 
     /**
      * POST /api/v2/payment/settle — settle on-chain.
      */
-    public function settle( array $x402_authorization ): ?array {
+    public function settle( array $x402_authorization, string $ucp_version ): ?array {
         $version = (int) ( $x402_authorization['x402Version']
             ?? $x402_authorization['paymentPayload']['x402Version'] ?? 2 );
         $body = array(
             'paymentPayload'      => $x402_authorization['paymentPayload'] ?? $x402_authorization,
             'paymentRequirements' => $x402_authorization['paymentRequirements'] ?? null,
         );
-        return $this->post( "/api/v{$version}/payment/settle", $body );
+        return $this->post( "/api/v{$version}/payment/settle", $body, $ucp_version );
     }
 
     /**
      * POST /api/v2/payment/verify — verify x402 authorization.
      */
-    public function verify( array $x402_authorization ): ?array {
+    public function verify( array $x402_authorization, string $ucp_version ): ?array {
         $version = (int) ( $x402_authorization['x402Version'] ?? 2 );
-        return $this->post( "/api/v{$version}/payment/verify", $x402_authorization );
+        return $this->post( "/api/v{$version}/payment/verify", $x402_authorization, $ucp_version );
     }
 
-    private function get( string $path ): ?array {
+    private function get( string $path, string $ucp_version ): ?array {
         $response = wp_remote_get( $this->api_url . $path, array(
-            'headers' => $this->headers(),
+            'headers' => $this->headers( $ucp_version ),
             'timeout' => 15,
         ) );
 
         return $this->parse_response( $response, "GET $path" );
     }
 
-    private function post( string $path, array $body ): ?array {
+    private function post( string $path, array $body, string $ucp_version ): ?array {
         $response = wp_remote_post( $this->api_url . $path, array(
-            'headers' => $this->headers(),
+            'headers' => $this->headers( $ucp_version ),
             'body'    => wp_json_encode( $body ),
             'timeout' => 30,
         ) );
@@ -74,11 +73,11 @@ class FD_Prism_Client {
         return $this->parse_response( $response, "POST $path" );
     }
 
-    public function headers(): array {
+    public function headers( string $ucp_version ): array {
         return array(
             'X-API-Key'    => $this->api_key,
             'Content-Type' => 'application/json',
-            'User-Agent'   => 'fd-woocommerce-prism/' . FD_PRISM_VERSION,
+            'User-Agent'   => 'fd-woocommerce-prism/' . $ucp_version,
         );
     }
 

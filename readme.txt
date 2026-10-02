@@ -72,6 +72,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 = 0.3.1 =
 * Upgraded stores without a stored UCP version now start on the latest version (2026-08-25), like new installs. Agents that declare 2026-04-08 or 2026-01-23 are still served in their version. A version already saved in settings is kept.
+* Prism payment: every Prism request now identifies itself as `fd-woocommerce-prism/<UCP version>` so Prism serves the matching handler contract, and the `ucp_version` query is no longer sent.
 
 = 0.3.0 =
 * Serves the latest UCP version (2026-08-25) by default on new installs; stores upgraded from a release before 0.3.0 keep 2026-04-08, byte-for-byte the same answers as 0.1.0, until changed in settings

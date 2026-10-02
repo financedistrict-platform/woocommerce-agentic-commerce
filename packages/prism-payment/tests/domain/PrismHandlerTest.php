@@ -47,7 +47,7 @@ final class PrismHandlerTest extends TestCase {
                 $this->fetched = $fetched;
             }
 
-            public function fetch_ucp_handlers( ?string $ucp_version = null ): ?array {
+            public function fetch_ucp_handlers( string $ucp_version ): ?array {
                 $this->versions[] = $ucp_version;
                 return $this->fetched;
             }
@@ -171,16 +171,42 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( array(), $this->handler( null )->get_ucp_discovery_handlers_for_version( '2026-08-25' ) );
     }
 
-    public function test_client_sends_the_fd_user_agent_on_every_call(): void {
+    public function test_client_sends_the_ucp_version_user_agent_and_no_query(): void {
         $client = new FD_Prism_Client( self::GW, 'key' );
         $client->fetch_ucp_handlers( '2026-08-25' );
-        $client->prepare_ucp_payment( '10.00', 'EUR', 'https://store.test/c/1', 'Order' );
+        $client->prepare_ucp_payment( '10.00', 'EUR', 'https://store.test/c/1', 'Order', '2026-04-08' );
+        $client->settle( array( 'x402Version' => 2, 'paymentPayload' => array() ), '2026-01-23' );
+        $client->verify( array( 'x402Version' => 2 ), '2026-08-25' );
 
-        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
-        foreach ( $GLOBALS['fd_test_requests'] as $request ) {
-            $this->assertSame( 'fd-woocommerce-prism/' . FD_PRISM_VERSION, $request['args']['headers']['User-Agent'] );
+        $requests = $GLOBALS['fd_test_requests'];
+        $this->assertCount( 4, $requests );
+        $this->assertSame( 'fd-woocommerce-prism/2026-08-25', $requests[0]['args']['headers']['User-Agent'] );
+        $this->assertSame( 'fd-woocommerce-prism/2026-04-08', $requests[1]['args']['headers']['User-Agent'] );
+        $this->assertSame( 'fd-woocommerce-prism/2026-01-23', $requests[2]['args']['headers']['User-Agent'] );
+        $this->assertSame( 'fd-woocommerce-prism/2026-08-25', $requests[3]['args']['headers']['User-Agent'] );
+        $this->assertSame( self::GW . '/api/v2/merchant/ucp/handlers', $requests[0]['url'] );
+        foreach ( $requests as $request ) {
+            $this->assertStringNotContainsString( 'ucp_version', $request['url'] );
         }
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/handlers?ucp_version=2026-08-25', $GLOBALS['fd_test_requests'][0]['url'] );
+    }
+
+    public function test_handler_sends_the_pinned_version_on_prepare_and_the_discovery_version_on_discovery(): void {
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-04-08' ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => '{}', 'response' => array( 'code' => 200 ) );
+        $handler = new FD_Prism_Handler( self::GW, 'key' );
+
+        $handler->prepare_checkout_payment( array(
+            'total'             => 1000,
+            'currency'          => 'EUR',
+            'checkout_id'       => 'c1',
+            'checkout_base_url' => 'https://store.test',
+            'store_name'        => 'Store',
+        ) );
+        $handler->get_ucp_discovery_handlers_for_version( '2026-01-23' );
+
+        $requests = $GLOBALS['fd_test_requests'];
+        $this->assertSame( 'fd-woocommerce-prism/2026-04-08', $requests[0]['args']['headers']['User-Agent'] );
+        $this->assertSame( 'fd-woocommerce-prism/2026-01-23', $requests[1]['args']['headers']['User-Agent'] );
     }
 
     public function test_third_party_handler_without_versioned_interface_is_still_listed(): void {
