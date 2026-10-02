@@ -118,7 +118,7 @@ Activate **UCP Core** first, then any payment handlers. Handlers hook into UCP a
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `fd_ucp_version` | latest (currently `2026-08-25`) | Version served when the agent does not ask for another one. Stores upgraded from a release before 0.3.0 keep `2026-04-08` until changed in settings |
+| `fd_ucp_version` | latest (currently `2026-08-25`) | Version served when the agent does not ask for another one. New installs and upgrades both start here |
 | `fd_ucp_supported_versions` | every other version (currently `2026-04-08`, `2026-01-23`) | Extra versions, listed in `ucp.supported_versions` and served at `/.well-known/ucp/<version>` |
 | `fd_ucp_version_negotiation` | `lenient` | `lenient` or `strict` (see below) |
 

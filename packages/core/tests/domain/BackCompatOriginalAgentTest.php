@@ -93,7 +93,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $this->assertSame( 'xyz.fd.prism_payment', $this->handler->settled[0]['handler_id'] );
         $this->assertSame( $instrument['credential'], $this->handler->settled[0]['credential'] );
         $this->assertSame( 'xyz.fd.prism_payment', $this->order->get_meta( '_fd_ucp_handler_id' ) );
-        $this->assertSame( '2026-04-08', $response->get_data()['ucp']['version'] );
+        $this->assertSame( FD_UCP_Version_Registry::LATEST, $response->get_data()['ucp']['version'] );
     }
 
     public function test_throwing_handler_releases_the_session(): void {
