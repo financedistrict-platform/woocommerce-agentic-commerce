@@ -81,6 +81,11 @@ class FD_UCP_Buyer_Identity_Controller {
 			return FD_UCP_Error::response( 'session_not_found', 'Session not found', 404 );
 		}
 
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
+		}
+
 		$stored = $session['agent_fingerprint'] ?? '';
 		if ( ! empty( $stored ) ) {
 			$agent      = $request->get_header( 'ucp-agent' ) ?? '';
@@ -100,16 +105,7 @@ class FD_UCP_Buyer_Identity_Controller {
 		}
 
 		return array(
-			'ucp'        => array(
-				'version'      => FD_UCP_Formatter::UCP_VERSION,
-				'status'       => 'success',
-				'capabilities' => array(
-					'dev.ucp.shopping.buyer_identity' => array( array(
-						'version' => FD_UCP_Formatter::UCP_VERSION,
-						'extends' => 'dev.ucp.shopping.checkout',
-					) ),
-				),
-			),
+			'ucp'        => FD_UCP_Request_Context::current()->wire()->envelope( array( 'buyer_identity' ) ),
 			'session_id' => $session['id'],
 			'buyer'      => $result,
 		);

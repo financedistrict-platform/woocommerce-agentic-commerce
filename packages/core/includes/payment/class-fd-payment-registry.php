@@ -3,6 +3,8 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_Payment_Registry {
 
+    private const ALIASES = array( 'x402' => 'xyz.fd.prism_payment' );
+
     /** @var FD_Payment_Handler[] */
     private array $handlers = array();
 
@@ -10,14 +12,22 @@ class FD_Payment_Registry {
         $this->handlers[ $handler->id() ] = $handler;
     }
 
-    public function get( string $id ): ?FD_Payment_Handler {
-        return $this->handlers[ $id ] ?? null;
+    public function canonical_id( string $id ): string {
+        $canonical = self::ALIASES[ $id ] ?? null;
+        return ( null !== $canonical && isset( $this->handlers[ $canonical ] ) ) ? $canonical : $id;
     }
 
-    public function get_ucp_discovery_handlers(): array {
+    public function get( string $id ): ?FD_Payment_Handler {
+        return $this->handlers[ $this->canonical_id( $id ) ] ?? null;
+    }
+
+    public function get_ucp_discovery_handlers( ?string $version = null ): array {
         $merged = array();
         foreach ( $this->handlers as $handler ) {
-            foreach ( $handler->get_ucp_discovery_handlers() as $ns => $entries ) {
+            $entries_by_ns = ( null !== $version && $handler instanceof FD_Versioned_Payment_Handler )
+                ? $handler->get_ucp_discovery_handlers_for_version( $version )
+                : $handler->get_ucp_discovery_handlers();
+            foreach ( $entries_by_ns as $ns => $entries ) {
                 $merged[ $ns ] = array_merge( $merged[ $ns ] ?? array(), $entries );
             }
         }

@@ -62,10 +62,66 @@ if ( ! function_exists( 'update_option' ) ) {
     }
 }
 
+if ( ! function_exists( 'wp_remote_get' ) ) {
+    function wp_remote_get( string $url, array $args = array() ) {
+        $GLOBALS['fd_test_requests'][] = array( 'url' => $url, 'args' => $args );
+        return $GLOBALS['fd_test_http_response'] ?? array( 'body' => '', 'response' => array( 'code' => 500 ) );
+    }
+}
+
+if ( ! function_exists( 'wp_remote_post' ) ) {
+    function wp_remote_post( string $url, array $args = array() ) {
+        $GLOBALS['fd_test_requests'][] = array( 'url' => $url, 'args' => $args );
+        return $GLOBALS['fd_test_http_response'] ?? array( 'body' => '', 'response' => array( 'code' => 500 ) );
+    }
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+    function wp_remote_retrieve_body( $response ): string {
+        return $response['body'];
+    }
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+    function wp_remote_retrieve_response_code( $response ): int {
+        return $response['response']['code'];
+    }
+}
+
+if ( ! function_exists( 'wp_json_encode' ) ) {
+    function wp_json_encode( $data, int $flags = 0 ) {
+        return json_encode( $data, $flags );
+    }
+}
+
+if ( ! function_exists( 'wc_get_logger' ) ) {
+    function wc_get_logger(): object {
+        return new class() {
+            public function __call( string $name, array $args ): void {
+            }
+        };
+    }
+}
+
+if ( ! defined( 'FD_PRISM_VERSION' ) ) {
+    preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-prism.php' ), $fd_prism_version );
+    define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
+}
+
 // Load testable domain classes
 $base = dirname( __DIR__ ) . '/includes';
+$core = dirname( __DIR__, 2 ) . '/core/includes';
 
 require_once $base . '/prism/class-fd-prism-validator.php';
-require_once dirname( __DIR__, 2 ) . '/core/includes/payment/interface-fd-payment-handler.php';
+require_once $core . '/payment/interface-fd-payment-handler.php';
+require_once $core . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $core . '/payment/class-fd-payment-registry.php';
+require_once $core . '/ucp/interface-fd-ucp-wire-format.php';
+require_once $core . '/ucp/wire/class-fd-ucp-wire-base.php';
+require_once $core . '/ucp/wire/class-fd-ucp-wire-20260825.php';
+require_once $core . '/ucp/wire/class-fd-ucp-wire-20260408.php';
+require_once $core . '/ucp/wire/class-fd-ucp-wire-20260123.php';
+require_once $core . '/ucp/class-fd-ucp-version-registry.php';
+require_once $core . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/prism/class-fd-prism-client.php';
 require_once $base . '/prism/class-fd-prism-handler.php';

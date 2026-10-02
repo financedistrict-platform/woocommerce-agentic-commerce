@@ -35,7 +35,7 @@ class FD_UCP_Promotions_Controller {
 
 		$valid   = $coupon->is_valid();
 		$result  = array(
-			'ucp'           => array( 'version' => FD_UCP_Formatter::UCP_VERSION, 'status' => 'success' ),
+			'ucp'           => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
 			'code'          => $coupon->get_code(),
 			'discount_type' => $coupon->get_discount_type(),
 			'amount'        => $coupon->get_amount(),
@@ -68,6 +68,11 @@ class FD_UCP_Promotions_Controller {
 		$ownership = $this->verify_ownership( $request, $session );
 		if ( is_wp_error( $ownership ) ) {
 			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+		}
+
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+		if ( null !== $pin ) {
+			return $pin;
 		}
 
 		if ( in_array( $session['status'], array( 'canceled', 'completed' ), true ) ) {
@@ -142,7 +147,7 @@ class FD_UCP_Promotions_Controller {
 		) );
 
 		return new WP_REST_Response( array(
-			'ucp'    => array( 'version' => FD_UCP_Formatter::UCP_VERSION, 'status' => 'success' ),
+			'ucp'    => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
 			'id'     => $session['id'],
 			'totals' => $new_totals,
 			'promotion_applied' => array(

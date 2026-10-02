@@ -1,0 +1,4 @@
+{
+  "invalid_instrument": {"message": "handler_id and credential are required", "status": 400},
+  "checkout_not_found": {"message": "Checkout session not found", "status": 404}
+}

@@ -3,130 +3,23 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Formatter {
 
-    public const UCP_VERSION = '2026-08-25';
+    public const UCP_VERSION = FD_UCP_Version_Registry::DEFAULT_CURRENT;
 
     public static function to_minor( float $amount ): int {
         return (int) round( $amount * 100 );
     }
 
-    /**
-     * Build /.well-known/ucp discovery profile.
-     */
     public static function format_profile( string $endpoint_base_url, FD_Payment_Registry $registry ): array {
-        $store_name = FD_UCP_Plugin::instance()->store_name();
-
-        return array(
-            'ucp'          => array(
-                'version'          => self::UCP_VERSION,
-                'services'         => array(
-                    'dev.ucp.shopping' => array(
-                        array(
-                            'version'   => self::UCP_VERSION,
-                            'spec'      => 'https://ucp.dev/' . self::UCP_VERSION . '/specification/overview',
-                            'transport' => 'rest',
-                            'schema'    => 'https://ucp.dev/' . self::UCP_VERSION . '/services/shopping/rest.openapi.json',
-                            'endpoint'  => $endpoint_base_url,
-                        ),
-                    ),
-                ),
-                'capabilities'     => array(
-                    'dev.ucp.shopping.cart'            => array( self::capability( 'specification/cart', 'schemas/shopping/cart.json' ) ),
-                    'dev.ucp.shopping.catalog.search'  => array( self::capability( 'specification/catalog/search', 'schemas/shopping/catalog_search.json' ) ),
-                    'dev.ucp.shopping.catalog.lookup'  => array( self::capability( 'specification/catalog/lookup', 'schemas/shopping/catalog_lookup.json' ) ),
-                    'dev.ucp.shopping.checkout'        => array( self::capability( 'specification/checkout', 'schemas/shopping/checkout.json' ) ),
-                    'dev.ucp.shopping.fulfillment'     => array( self::capability( 'specification/fulfillment', 'schemas/shopping/fulfillment.json' ) + array(
-                        'extends' => 'dev.ucp.shopping.checkout',
-                    ) ),
-                    'dev.ucp.shopping.order'           => array( self::capability( 'specification/order', 'schemas/shopping/order.json' ) ),
-                ),
-                'payment_handlers' => $registry->get_ucp_discovery_handlers(),
-            ),
-            'name'         => $store_name,
-        );
+        $context = FD_UCP_Request_Context::current();
+        return $context->wire()->profile( $endpoint_base_url, $registry, $context->supported_versions_map() );
     }
 
-    private static function capability( string $spec_path, string $schema_path ): array {
-        $base = 'https://ucp.dev/' . self::UCP_VERSION . '/';
-        return array(
-            'version' => self::UCP_VERSION,
-            'spec'    => $base . $spec_path,
-            'schema'  => $base . $schema_path,
-        );
-    }
-
-    /**
-     * Format a checkout session for UCP response.
-     */
     public static function format_checkout_session( array $session, FD_Payment_Registry $registry ): array {
-        $line_items  = self::decode_json( $session['line_items'] ?? '[]' );
-        $totals      = self::decode_json( $session['totals'] ?? '[]' );
-        $buyer       = self::decode_json( $session['buyer'] ?? 'null' );
-        $fulfillment = self::decode_json( $session['fulfillment'] ?? 'null' );
-        $payment_meta = self::decode_json( $session['payment_meta'] ?? 'null' );
-
-        $status   = FD_UCP_Status::resolve( $session );
-        $missing  = FD_UCP_Status::missing_requirements( $session );
-        $messages = FD_UCP_Status::missing_messages( $missing );
-        $messages = apply_filters( 'fd_ucp_checkout_messages', $messages, $session );
-
-        $response = array(
-            'ucp'        => array(
-                'version'          => self::UCP_VERSION,
-                'status'           => 'success',
-                'capabilities'     => array(
-                    'dev.ucp.shopping.checkout'    => array( array( 'version' => self::UCP_VERSION ) ),
-                    'dev.ucp.shopping.fulfillment' => array( array(
-                        'version' => self::UCP_VERSION,
-                        'extends' => 'dev.ucp.shopping.checkout',
-                    ) ),
-                ),
-                'payment_handlers' => $registry->get_ucp_checkout_handlers( $payment_meta ),
-            ),
-            'id'         => $session['id'],
-            'status'     => $status,
-            'currency'   => $session['currency'] ?? 'USD',
-            'line_items' => $line_items,
-            'totals'     => $totals,
-            'messages'   => $messages,
-            'links'      => array(),
-        );
-
-        if ( $buyer ) {
-            $response['buyer'] = $buyer;
-        }
-        if ( $fulfillment ) {
-            $response['fulfillment'] = $fulfillment;
-        }
-        if ( ! empty( $session['expires_at'] ) ) {
-            $response['expires_at'] = $session['expires_at'];
-        }
-
-        return $response;
+        return FD_UCP_Request_Context::current()->wire()->checkout_session( $session, $registry );
     }
 
-    /**
-     * Format a completed checkout session with order confirmation.
-     */
     public static function format_complete_response( array $session, WC_Order $order, FD_Payment_Registry $registry ): array {
-        $response           = self::format_checkout_session( $session, $registry );
-        $response['status'] = 'completed';
-
-        $response['order'] = array(
-            'id'            => (string) $order->get_id(),
-            'label'         => $order->get_order_number(),
-            'permalink_url' => $order->get_view_order_url(),
-        );
-
-        $tx_ref = $order->get_meta( '_fd_ucp_tx_reference' );
-        if ( $tx_ref ) {
-            $response['order']['transaction_reference'] = $tx_ref;
-            $network = $order->get_meta( '_fd_ucp_network' );
-            if ( $network ) {
-                $response['order']['network'] = $network;
-            }
-        }
-
-        return $response;
+        return FD_UCP_Request_Context::current()->wire()->complete_response( $session, $order, $registry );
     }
 
     /**
@@ -231,7 +124,7 @@ class FD_UCP_Formatter {
 
         $response = array(
             'ucp'        => array(
-                'version' => self::UCP_VERSION,
+                'version' => FD_UCP_Request_Context::current()->version(),
                 'status'  => 'success',
             ),
             'id'         => (string) $order->get_id(),
@@ -287,10 +180,5 @@ class FD_UCP_Formatter {
             $options[] = array( 'name' => ucfirst( $name ), 'value' => $value );
         }
         return $options;
-    }
-
-    private static function decode_json( string $json ) {
-        $decoded = json_decode( $json, true );
-        return ( json_last_error() === JSON_ERROR_NONE ) ? $decoded : null;
     }
 }

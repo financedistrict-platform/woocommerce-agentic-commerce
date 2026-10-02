@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.1.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,6 +70,15 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Changelog ==
 
+= 0.3.0 =
+* Serves the latest UCP version (2026-08-25) by default on new installs; stores upgraded from a release before 0.3.0 keep 2026-04-08, byte-for-byte the same answers as 0.1.0, until changed in settings
+* Also serves the other UCP versions (2026-04-08, 2026-01-23 on new installs), advertised in `supported_versions` with a profile per version at `/.well-known/ucp/<version>`
+* Picks the version from the agent profile in the `UCP-Agent` header; a checkout or cart keeps the version it was created with
+* New settings under WooCommerce > Settings > Advanced > UCP versions
+* Accepts original instruments again (`tokenized`, `default`, missing type, `x402` handler id, string credentials); orders record `xyz.fd.prism_payment`
+* Prism payment: identifies itself to Prism, asks for the matching UCP version, and accepts both Prism handler entry shapes
+* UCP 2026-08-25 answers now follow its schema: error severity `unrecoverable` instead of `fatal`, empty `payment_handlers` as an object, and cart totals with a `total` line
+
 = 0.1.0 =
 * Initial release
 * UCP discovery, catalog, checkout, and order endpoints
@@ -79,6 +88,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 * Credential validation before settlement
 
 == Upgrade Notices ==
+
+= 0.3.0 =
+New installs default to the latest UCP version (2026-08-25); upgraded stores keep 2026-04-08 until changed in settings. Update the UCP and Prism plugins together.
 
 = 0.1.0 =
 Initial release.

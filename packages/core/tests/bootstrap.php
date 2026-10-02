@@ -4,7 +4,7 @@
  * so pure-logic classes can be tested without a running WP instance.
  */
 
-define( 'ABSPATH', '/tmp/wp/' );
+define( 'ABSPATH', __DIR__ . '/support/wp/' );
 
 // Minimal WP_Error stub
 if ( ! class_exists( 'WP_Error' ) ) {
@@ -48,7 +48,7 @@ if ( ! function_exists( 'is_wp_error' ) ) {
 // Minimal WP_REST_Response stub
 if ( ! class_exists( 'WP_REST_Response' ) ) {
     class WP_REST_Response {
-        public array $data;
+        public $data;
         public int $status;
 
         public function __construct( $data = null, int $status = 200 ) {
@@ -56,7 +56,7 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
             $this->status = $status;
         }
 
-        public function get_data(): array {
+        public function get_data() {
             return $this->data;
         }
 
@@ -66,32 +66,54 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
     }
 }
 
-if ( ! function_exists( 'get_bloginfo' ) ) {
-    function get_bloginfo( string $show = '' ): string {
-        return 'Test Store';
-    }
+require_once __DIR__ . '/support/wp-test-stubs.php';
+require_once __DIR__ . '/golden/capture-stubs.php';
+
+if ( ! defined( 'FD_UCP_VERSION' ) ) {
+    preg_match( "/define\( 'FD_UCP_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-ucp.php' ), $fd_ucp_version );
+    define( 'FD_UCP_VERSION', $fd_ucp_version[1] );
 }
 
-if ( ! function_exists( 'add_action' ) ) {
-    function add_action( ...$args ): bool {
-        return true;
-    }
-}
-
-if ( ! function_exists( 'add_filter' ) ) {
-    function add_filter( ...$args ): bool {
-        return true;
-    }
+if ( ! defined( 'FD_UCP_DB_VERSION' ) ) {
+    preg_match( "/define\( 'FD_UCP_DB_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-ucp.php' ), $fd_ucp_db_version );
+    define( 'FD_UCP_DB_VERSION', $fd_ucp_db_version[1] );
 }
 
 // Load testable domain classes
 $base = dirname( __DIR__ ) . '/includes';
 
+require_once $base . '/class-fd-ucp-installer.php';
 require_once $base . '/ucp/class-fd-ucp-address.php';
 require_once $base . '/ucp/class-fd-ucp-status.php';
+require_once $base . '/payment/interface-fd-payment-handler.php';
+require_once $base . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $base . '/payment/class-fd-payment-registry.php';
+require_once $base . '/ucp/interface-fd-ucp-wire-format.php';
+require_once $base . '/ucp/wire/class-fd-ucp-wire-base.php';
+require_once $base . '/ucp/wire/class-fd-ucp-wire-20260825.php';
+require_once $base . '/ucp/wire/class-fd-ucp-wire-20260408.php';
+require_once $base . '/ucp/wire/class-fd-ucp-wire-20260123.php';
+require_once $base . '/ucp/class-fd-ucp-version-registry.php';
+require_once $base . '/ucp/class-fd-ucp-request-context.php';
+require_once $base . '/ucp/class-fd-ucp-agent-profile-fetcher.php';
+require_once $base . '/ucp/class-fd-ucp-version-resolver.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';
-require_once $base . '/payment/interface-fd-payment-handler.php';
-require_once $base . '/payment/class-fd-payment-registry.php';
+require_once $base . '/ucp/class-fd-ucp-cart-controller.php';
+require_once $base . '/class-fd-rate-limiter.php';
+require_once $base . '/ucp/class-fd-ucp-checkout-controller.php';
 require_once $base . '/class-fd-ucp-plugin.php';
+require_once $base . '/admin/class-fd-ucp-settings.php';
+
+$prism = dirname( __DIR__, 2 ) . '/prism-payment';
+if ( ! defined( 'FD_PRISM_VERSION' ) ) {
+    preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( $prism . '/fd-woocommerce-prism.php' ), $fd_prism_version );
+    define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
+}
+require_once $prism . '/includes/prism/class-fd-prism-client.php';
+require_once $prism . '/includes/prism/class-fd-prism-validator.php';
+require_once $prism . '/includes/prism/class-fd-prism-handler.php';
+
+require_once __DIR__ . '/support/golden-renderer.php';
+require_once __DIR__ . '/support/fixture-profile-fetcher.php';

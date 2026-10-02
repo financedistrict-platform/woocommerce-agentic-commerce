@@ -59,13 +59,7 @@ class FD_UCP_Order_Controller {
         );
 
         return new WP_REST_Response( array(
-            'ucp' => array(
-                'version'      => FD_UCP_Formatter::UCP_VERSION,
-                'status'       => 'success',
-                'capabilities' => array(
-                    'dev.ucp.shopping.order' => array( array( 'version' => FD_UCP_Formatter::UCP_VERSION ) ),
-                ),
-            ),
+            'ucp' => FD_UCP_Request_Context::current()->wire()->envelope( array( 'order' ) ),
             'orders'     => $formatted,
             'pagination' => array(
                 'limit'  => $limit,

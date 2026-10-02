@@ -1,16 +1,21 @@
 <?php
 defined( 'ABSPATH' ) || exit;
 
-class FD_Prism_Handler implements FD_Payment_Handler {
+class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handler {
 
-    private const HANDLER_ID    = 'xyz.fd.prism_payment';
-    private const CACHE_KEY     = 'fd_prism_discovery_cache';
-    private const CACHE_TTL     = 300; // 5 minutes
+    private const HANDLER_ID        = 'xyz.fd.prism_payment';
+    private const LEGACY_HANDLER_ID = 'x402';
+    private const CACHE_PREFIX      = 'fd_prism_discovery_';
+    private const STALE_PREFIX      = '_fd_prism_discovery_stale_';
+    private const CACHE_TTL         = 300;
+    private const INSTRUMENT_TYPES  = array( 'x402', 'tokenized', 'default' );
 
     private FD_Prism_Client $client;
+    private string $api_url;
 
     public function __construct( string $api_url, string $api_key ) {
-        $this->client = new FD_Prism_Client( $api_url, $api_key );
+        $this->api_url = $api_url;
+        $this->client  = new FD_Prism_Client( $api_url, $api_key );
     }
 
     public function id(): string {
@@ -25,33 +30,73 @@ class FD_Prism_Handler implements FD_Payment_Handler {
     // Discovery
     // =========================================================================
 
-    public function get_ucp_discovery_handlers(): array {
-        $cached = get_transient( self::CACHE_KEY );
-        if ( false !== $cached && $this->contract_entry_ok( $cached ) ) {
-            return $this->as_wire( $cached );
-        }
-
-        $handlers = $this->client->fetch_ucp_handlers();
-        if ( $handlers ) {
-            $violation = $this->contract_violation( $handlers );
-            if ( null === $violation ) {
-                set_transient( self::CACHE_KEY, $handlers, self::CACHE_TTL );
-                update_option( '_fd_prism_discovery_stale', $handlers, false );
-                return $this->as_wire( $handlers );
-            }
-            error_log( 'fd-prism: Prism handlers entry rejected, missing or invalid field: ' . $violation );
-        }
-
-        $stale = get_option( '_fd_prism_discovery_stale', array() );
-        if ( is_array( $stale ) && $this->contract_entry_ok( $stale ) ) {
-            return $this->as_wire( $stale );
-        }
-
-        return array();
+    public static function cache_key( string $api_url, string $ucp_version ): string {
+        return self::CACHE_PREFIX . md5( $api_url . '|' . $ucp_version );
     }
 
-    private function contract_entry_ok( $handlers ): bool {
-        return null === $this->contract_violation( $handlers );
+    public static function stale_key( string $api_url, string $ucp_version ): string {
+        return self::STALE_PREFIX . md5( $api_url . '|' . $ucp_version );
+    }
+
+    public function get_ucp_discovery_handlers(): array {
+        return $this->get_ucp_discovery_handlers_for_version( FD_UCP_Request_Context::current()->version() );
+    }
+
+    public function get_ucp_discovery_handlers_for_version( string $ucp_version ): array {
+        $cache_key = self::cache_key( $this->api_url, $ucp_version );
+        $stale_key = self::stale_key( $this->api_url, $ucp_version );
+
+        $cached = get_transient( $cache_key );
+        if ( false !== $cached ) {
+            $canonical = $this->canonical_handlers( $cached );
+            if ( null !== $canonical ) {
+                return $canonical;
+            }
+        }
+
+        $fetched = $this->client->fetch_ucp_handlers( $ucp_version );
+        if ( $fetched ) {
+            $canonical = $this->canonical_handlers( $fetched );
+            if ( null !== $canonical ) {
+                set_transient( $cache_key, $fetched, self::CACHE_TTL );
+                update_option( $stale_key, $fetched, false );
+                return $canonical;
+            }
+            error_log( 'fd-prism: Prism handlers entry rejected, missing or invalid field: ' . $this->contract_violation( $fetched ) );
+        }
+
+        $stale     = get_option( $stale_key, array() );
+        $canonical = is_array( $stale ) ? $this->canonical_handlers( $stale ) : null;
+        return $canonical ?? array();
+    }
+
+    private function canonical_handlers( $handlers ): ?array {
+        if ( null !== $this->contract_violation( $handlers ) ) {
+            return null;
+        }
+        foreach ( $handlers as $ns => $entries ) {
+            foreach ( $entries as $i => $entry ) {
+                $handlers[ $ns ][ $i ] = $this->canonical_entry( $entry, (string) $ns );
+            }
+        }
+        return $handlers;
+    }
+
+    private function canonical_entry( array $entry, string $ns ): array {
+        if ( self::HANDLER_ID === $ns && self::LEGACY_HANDLER_ID === ( $entry['id'] ?? null ) ) {
+            $entry['id'] = self::HANDLER_ID;
+        }
+        if ( ! isset( $entry['schema'] ) && isset( $entry['config_schema'] ) ) {
+            $entry['schema'] = $entry['config_schema'];
+        }
+        if ( ! isset( $entry['instrument_schemas'] ) ) {
+            $entry['instrument_schemas'] = array();
+        }
+        if ( empty( $entry['name'] ) ) {
+            unset( $entry['name'] );
+            $entry['name'] = $ns;
+        }
+        return $entry;
     }
 
     private function contract_violation( $handlers ): ?string {
@@ -59,34 +104,30 @@ class FD_Prism_Handler implements FD_Payment_Handler {
         if ( ! is_array( $entry ) ) {
             return self::HANDLER_ID . '[0]';
         }
-        if ( ( $entry['id'] ?? null ) !== self::HANDLER_ID ) {
+        if ( ! in_array( $entry['id'] ?? null, array( self::HANDLER_ID, self::LEGACY_HANDLER_ID ), true ) ) {
             return 'id';
         }
-        foreach ( array( 'version', 'schema', 'spec' ) as $field ) {
+        foreach ( array( 'version', 'spec' ) as $field ) {
             if ( ! is_string( $entry[ $field ] ?? null ) || '' === $entry[ $field ] ) {
                 return $field;
             }
         }
+        $schema = $entry['schema'] ?? $entry['config_schema'] ?? null;
+        if ( ! is_string( $schema ) || '' === $schema ) {
+            return 'schema';
+        }
         return null;
     }
 
-    private function as_wire( array $handlers ): array {
-        foreach ( $handlers as $ns => $entries ) {
-            foreach ( $entries as $i => $entry ) {
-                if ( is_array( $entry['config'] ?? null ) ) {
-                    $handlers[ $ns ][ $i ]['config'] = (object) $entry['config'];
-                }
-            }
-        }
-        return $handlers;
-    }
-
     public function validate_instrument( array $instrument ): ?string {
-        $credential      = $instrument['credential'] ?? null;
-        $credential_type = is_array( $credential ) ? ( $credential['type'] ?? null ) : null;
+        $type = $instrument['type'] ?? null;
+        if ( null !== $type && ! in_array( $type, self::INSTRUMENT_TYPES, true ) ) {
+            return 'Prism instrument type must be "x402"';
+        }
 
-        if ( 'x402' !== ( $instrument['type'] ?? null ) || 'x402' !== $credential_type ) {
-            return 'Prism instrument and credential type must be "x402"';
+        $credential = $instrument['credential'] ?? null;
+        if ( is_array( $credential ) && null !== ( $credential['type'] ?? null ) && 'x402' !== $credential['type'] ) {
+            return 'Prism credential type must be "x402"';
         }
         return null;
     }
@@ -230,11 +271,23 @@ class FD_Prism_Handler implements FD_Payment_Handler {
     // =========================================================================
 
     private function decode_credential( $credential ): ?array {
+        if ( is_string( $credential ) ) {
+            $decoded = base64_decode( $credential, true );
+            if ( $decoded ) {
+                $parsed = json_decode( $decoded, true );
+                if ( is_array( $parsed ) ) {
+                    return $parsed;
+                }
+            }
+            $parsed = json_decode( $credential, true );
+            return is_array( $parsed ) ? $parsed : null;
+        }
+
         if ( ! is_array( $credential ) ) {
             return null;
         }
-        if ( is_array( $credential['authorization'] ?? null ) && ! isset( $credential['paymentPayload'] ) ) {
-            return $credential['authorization'];
+        if ( isset( $credential['authorization'] ) && ! isset( $credential['paymentPayload'] ) ) {
+            return $this->decode_credential( $credential['authorization'] );
         }
         return $credential;
     }
