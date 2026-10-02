@@ -33,8 +33,9 @@ class FD_UCP_Installer {
             return;
         }
         $pinned = FD_UCP_Version_Registry::SINGLE_VERSION_RELEASE_CURRENT;
-        add_option( FD_UCP_Version_Registry::OPTION_CURRENT, $pinned );
-        add_option( FD_UCP_Version_Registry::OPTION_SUPPORTED, array_values( array_diff( FD_UCP_Version_Registry::known(), array( $pinned ) ) ) );
+        if ( add_option( FD_UCP_Version_Registry::OPTION_CURRENT, $pinned ) ) {
+            add_option( FD_UCP_Version_Registry::OPTION_SUPPORTED, array_values( array_diff( FD_UCP_Version_Registry::known(), array( $pinned ) ) ) );
+        }
     }
 
     private static function create_tables(): void {

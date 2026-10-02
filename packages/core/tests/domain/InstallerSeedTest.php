@@ -75,4 +75,21 @@ final class InstallerSeedTest extends TestCase {
 
         $this->assertSame( $before, FD_Test_WP::$options );
     }
+
+    public function test_reactivating_a_fresh_store_keeps_every_version_enabled(): void {
+        FD_UCP_Installer::install();
+        FD_UCP_Installer::install();
+
+        $this->assertArrayNotHasKey( FD_UCP_Version_Registry::OPTION_SUPPORTED, FD_Test_WP::$options );
+        $this->assertSame( array( '2026-08-25', '2026-04-08', '2026-01-23' ), FD_UCP_Version_Registry::from_options()->enabled() );
+    }
+
+    public function test_upgrade_over_a_store_with_a_current_version_leaves_the_supported_list_alone(): void {
+        FD_Test_WP::$options[ FD_UCP_Version_Registry::OPTION_CURRENT ] = FD_UCP_Version_Registry::LATEST;
+        FD_Test_WP::$options['fd_ucp_db_version']                       = '1.1.0';
+
+        FD_UCP_Installer::maybe_upgrade();
+
+        $this->assertArrayNotHasKey( FD_UCP_Version_Registry::OPTION_SUPPORTED, FD_Test_WP::$options );
+    }
 }
