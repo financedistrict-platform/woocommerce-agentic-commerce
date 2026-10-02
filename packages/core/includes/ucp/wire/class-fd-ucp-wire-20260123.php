@@ -23,18 +23,15 @@ class FD_UCP_Wire_20260123 extends FD_UCP_Wire_Base {
                             'version'   => self::VERSION,
                             'spec'      => 'https://ucp.dev/' . self::VERSION . '/specification/overview',
                             'transport' => 'rest',
-                            'schema'    => 'https://ucp.dev/' . self::VERSION . '/services/shopping/rest.openapi.json',
+                            'schema'    => 'https://ucp.dev/' . self::VERSION . '/services/shopping/openapi.json',
                             'endpoint'  => $endpoint,
                         ),
                     ),
                 ),
                 'capabilities'     => array(
-                    'dev.ucp.shopping.checkout'       => array( $this->capability( 'checkout/', 'checkout.json' ) ),
-                    'dev.ucp.shopping.fulfillment'    => array( $this->capability( 'fulfillment/', 'fulfillment.json', 'dev.ucp.shopping.checkout' ) ),
-                    'dev.ucp.shopping.buyer_identity' => array( $this->capability( 'buyer-identity/', 'buyer-identity.json', 'dev.ucp.shopping.checkout' ) ),
-                    'dev.ucp.shopping.promotions'     => array( $this->capability( 'discount/', 'discount.json', 'dev.ucp.shopping.checkout' ) ),
-                    'dev.ucp.shopping.orders'         => array( $this->capability( 'order/', 'order.json' ) ),
-                    'dev.ucp.shopping.returns'        => array( $this->capability( 'returns/', 'returns.json', 'dev.ucp.shopping.orders' ) ),
+                    'dev.ucp.shopping.checkout'    => array( $this->capability( 'checkout/', 'checkout.json' ) ),
+                    'dev.ucp.shopping.fulfillment' => array( $this->capability( 'fulfillment/', 'fulfillment.json', 'dev.ucp.shopping.checkout' ) ),
+                    'dev.ucp.shopping.order'       => array( $this->capability( 'order/', 'order.json' ) ),
                 ),
                 'payment_handlers' => $this->handler_registry( $this->without_later_fields( $registry->get_ucp_discovery_handlers( self::VERSION ) ) ),
             ),
@@ -65,10 +62,7 @@ class FD_UCP_Wire_20260123 extends FD_UCP_Wire_Base {
     }
 
     public function capabilities(): array {
-        return array(
-            'buyer_identity' => array( 'name' => 'dev.ucp.shopping.buyer_identity', 'extends' => 'dev.ucp.shopping.checkout' ),
-            'order'          => array( 'name' => 'dev.ucp.shopping.orders' ),
-        );
+        return array( 'order' => array( 'name' => 'dev.ucp.shopping.order' ) );
     }
 
     protected function error_severity(): string {

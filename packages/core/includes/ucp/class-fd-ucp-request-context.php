@@ -10,7 +10,7 @@ final class FD_UCP_Request_Context {
     public const OUTCOME_UNKNOWN     = 'unknown';
     public const OUTCOME_DISABLED    = 'disabled';
 
-    public const FALLBACK_OUTCOMES = array( self::OUTCOME_UNREACHABLE, self::OUTCOME_UNDECLARED, self::OUTCOME_UNKNOWN );
+    public const FALLBACK_OUTCOMES = array( self::OUTCOME_UNREACHABLE, self::OUTCOME_UNDECLARED );
 
     private static ?self $current = null;
 

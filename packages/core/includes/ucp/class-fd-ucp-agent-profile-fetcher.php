@@ -5,7 +5,7 @@ class FD_UCP_Agent_Profile_Fetcher {
 
     public const CACHE_GROUP = 'fd_ucp_profiles';
     public const CACHE_TTL   = 600;
-    public const MAX_BYTES   = 65536;
+    public const MAX_BYTES   = 131072;
     public const TIMEOUT     = 3;
 
     private bool $allow_loopback;
