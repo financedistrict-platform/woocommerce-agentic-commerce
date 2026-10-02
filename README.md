@@ -180,20 +180,22 @@ An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 confi
 
 ### UCP Capabilities
 
-The discovery endpoint advertises these capabilities per the [UCP spec](https://ucp.dev):
+Each UCP version advertises its own capability set at `/.well-known/ucp/<version>`, per the [UCP spec](https://ucp.dev):
 
-| Capability | Description |
-|------------|-------------|
-| `dev.ucp.shopping.cart` | Cart CRUD |
-| `dev.ucp.shopping.catalog.search` | Full-text product search |
-| `dev.ucp.shopping.catalog.lookup` | Product lookup by ID |
-| `dev.ucp.shopping.checkout` | Checkout session lifecycle |
-| `dev.ucp.shopping.fulfillment` | Shipping methods and addresses |
-| `dev.ucp.shopping.buyer_identity` | Buyer email and name |
-| `dev.ucp.shopping.orders` | Order retrieval |
-| `dev.ucp.shopping.returns` | Return requests |
+| Capability | 2026-08-25 | 2026-04-08 | 2026-01-23 |
+|------------|:---:|:---:|:---:|
+| `dev.ucp.shopping.cart` | yes | yes | |
+| `dev.ucp.shopping.catalog.search` | yes | yes | |
+| `dev.ucp.shopping.catalog.lookup` | yes | yes | |
+| `dev.ucp.shopping.checkout` | yes | yes | yes |
+| `dev.ucp.shopping.fulfillment` | yes | yes | yes |
+| `dev.ucp.shopping.order` | yes | | yes |
+| `dev.ucp.shopping.orders` | | yes | |
+| `dev.ucp.shopping.buyer_identity` | | yes | |
+| `dev.ucp.shopping.promotions` | | yes | |
+| `dev.ucp.shopping.returns` | | yes | |
 
-Discount codes are a WooCommerce-specific REST route (`/promotions/validate`, `/checkout-sessions/{id}/promotions`), not a UCP capability, so discovery does not advertise them.
+Discount codes are a WooCommerce-specific REST route (`/promotions/validate`, `/checkout-sessions/{id}/promotions`). Only 2026-04-08 advertises them as a capability.
 
 ## Custom Payment Handlers
 
@@ -247,7 +249,8 @@ cd packages/prism-payment && composer install && vendor/bin/phpunit
 Integration tests run against a live store using curl. Point them at your running WooCommerce store (with the plugins installed and activated).
 
 ```bash
-# UCP protocol tests (18 tests)
+# UCP protocol tests (up to 19 checks, depending on the version's capabilities)
+# Optional: UCP_VER=<version> UCP_AGENT_PROFILE=<profile url, with trailing slash>
 bash packages/core/tests/curl/30-ucp-integration-test.sh [product_id]
 
 # Prism payment tests (15 tests)
@@ -261,10 +264,10 @@ bash packages/dummy-payment/tests/curl/30-dummy-integration-test.sh [product_id]
 
 | Package | Unit | Integration | Total |
 |---------|------|-------------|-------|
-| Core UCP | 18 | 18 | 36 |
-| Prism Payment | 14 | 15 | 29 |
+| Core UCP | 150 | 19 | 169 |
+| Prism Payment | 40 | 15 | 55 |
 | Dummy Payment | — | 17 | 17 |
-| **Total** | **32** | **50** | **82** |
+| **Total** | **190** | **51** | **241** |
 
 ## Development
 
