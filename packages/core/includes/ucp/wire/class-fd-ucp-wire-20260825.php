@@ -44,7 +44,6 @@ class FD_UCP_Wire_20260825 extends FD_UCP_Wire_Base {
 
     public function capabilities(): array {
         return array(
-            'buyer_identity' => array( 'name' => 'dev.ucp.shopping.buyer_identity', 'extends' => 'dev.ucp.shopping.checkout' ),
             'cart'           => array( 'name' => 'dev.ucp.shopping.cart' ),
             'catalog.search' => array( 'name' => 'dev.ucp.shopping.catalog.search' ),
             'catalog.lookup' => array( 'name' => 'dev.ucp.shopping.catalog.lookup' ),

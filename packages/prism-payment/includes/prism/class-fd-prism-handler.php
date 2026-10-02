@@ -161,7 +161,8 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             $amount_major,
             $currency,
             $resource_url,
-            "$order_label at $store_name"
+            "$order_label at $store_name",
+            FD_UCP_Request_Context::current()->version()
         );
 
         if ( ! $result ) {
@@ -201,7 +202,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $result = $this->client->settle( $authorization );
+        $result = $this->client->settle( $authorization, FD_UCP_Request_Context::current()->version() );
         if ( ! $result ) {
             return array(
                 'success' => false,

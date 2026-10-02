@@ -34,20 +34,20 @@ class FD_UCP_Version_Resolver {
 
         if ( FD_UCP_Request_Context::OUTCOME_MATCHED === $outcome ) {
             if ( null !== $pinned && $declared !== $pinned ) {
-                return $this->reject( $declared, $outcome, $host, 422, 'version_unsupported', $this->unsupported_message( $declared ) );
+                return $this->reject( $declared, $outcome, $host, 422, 'version_unsupported', sprintf( 'This session is bound to UCP version %s; the agent profile now declares %s.', $pinned, $declared ) );
             }
             return $this->served( $declared, $outcome, $declared, $host );
         }
 
-        if ( FD_UCP_Request_Context::OUTCOME_DISABLED === $outcome ) {
+        if ( FD_UCP_Request_Context::OUTCOME_DISABLED === $outcome || FD_UCP_Request_Context::OUTCOME_UNKNOWN === $outcome ) {
             return $this->reject( $declared, $outcome, $host, 422, 'version_unsupported', $this->unsupported_message( $declared ) );
         }
 
         if ( $this->versions->is_strict() ) {
             if ( FD_UCP_Request_Context::OUTCOME_UNREACHABLE === $outcome ) {
-                return $this->reject( $declared, $outcome, $host, 424, 'agent_profile_unavailable', 'Agent profile could not be retrieved.' );
+                return $this->reject( $declared, $outcome, $host, 424, 'profile_unreachable', 'Agent profile could not be retrieved.' );
             }
-            return $this->reject( $declared, $outcome, $host, 422, 'version_unsupported', $this->unsupported_message( $declared ?? 'undeclared' ) );
+            return $this->reject( $declared, $outcome, $host, 422, 'profile_malformed', 'Agent profile does not declare a UCP version.' );
         }
 
         $served = $pinned ?? $current;
