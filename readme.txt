@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.4.0
+Stable tag: 0.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,7 +70,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Changelog ==
 
-= 0.4.0 =
+= 0.3.1 =
 * Upgraded stores without a stored UCP version now start on the latest version (2026-08-25), like new installs. Agents that declare 2026-04-08 or 2026-01-23 are still served in their version. A version already saved in settings is kept.
 
 = 0.3.0 =
@@ -92,7 +92,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Upgrade Notices ==
 
-= 0.4.0 =
+= 0.3.1 =
 Upgraded stores serve the latest UCP version (2026-08-25) by default. Set an older version under WooCommerce > Settings > Advanced > UCP versions to keep it.
 
 = 0.3.0 =
