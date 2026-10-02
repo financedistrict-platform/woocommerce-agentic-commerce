@@ -60,8 +60,8 @@ final class VersionResolverTest extends TestCase {
         $this->assertSame( array(), $fetcher->requested );
     }
 
-    public function test_upgraded_store_serves_its_seeded_version_to_agents_without_a_usable_profile(): void {
-        $versions = new FD_UCP_Version_Registry( FD_UCP_Version_Registry::SINGLE_VERSION_RELEASE_CURRENT, array( '2026-08-25', '2026-01-23' ) );
+    public function test_store_on_an_older_version_serves_it_to_agents_without_a_usable_profile(): void {
+        $versions = new FD_UCP_Version_Registry( '2026-04-08', array( '2026-08-25', '2026-01-23' ) );
         $resolver = new FD_UCP_Version_Resolver( $versions, new FD_Test_Fixture_Profile_Fetcher( array() ) );
 
         $this->assertSame( '2026-04-08', $resolver->resolve( null )->version() );

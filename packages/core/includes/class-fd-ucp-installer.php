@@ -28,14 +28,7 @@ class FD_UCP_Installer {
     }
 
     private static function seed_version_option(): void {
-        if ( false === get_option( 'fd_ucp_db_version' ) ) {
-            add_option( FD_UCP_Version_Registry::OPTION_CURRENT, FD_UCP_Version_Registry::LATEST );
-            return;
-        }
-        $pinned = FD_UCP_Version_Registry::SINGLE_VERSION_RELEASE_CURRENT;
-        if ( add_option( FD_UCP_Version_Registry::OPTION_CURRENT, $pinned ) ) {
-            add_option( FD_UCP_Version_Registry::OPTION_SUPPORTED, array_values( array_diff( FD_UCP_Version_Registry::known(), array( $pinned ) ) ) );
-        }
+        add_option( FD_UCP_Version_Registry::OPTION_CURRENT, FD_UCP_Version_Registry::LATEST );
     }
 
     private static function create_tables(): void {

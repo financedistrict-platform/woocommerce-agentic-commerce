@@ -3,7 +3,7 @@
  * Plugin Name: Finance District UCP
  * Plugin URI: https://developers.fd.xyz
  * Description: Universal Commerce Protocol (UCP) endpoints for WooCommerce. Makes your store discoverable and purchasable by AI agents. Payment handlers are registered by separate plugins.
- * Version: 0.3.0
+ * Version: 0.3.1
  * Author: Finance District (1st Digital)
  * Author URI: https://fd.xyz
  * Requires at least: 6.4
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FD_UCP_VERSION', '0.3.0' );
+define( 'FD_UCP_VERSION', '0.3.1' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FD_UCP_DB_VERSION', '1.2.0' );
