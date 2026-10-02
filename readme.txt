@@ -101,6 +101,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Upgrade Notices ==
 
+= 0.3.2 =
+Update the UCP and Prism plugins together.
+
 = 0.3.1 =
 Upgraded stores serve the latest UCP version (2026-08-25) by default. Set an older version under WooCommerce > Settings > Advanced > UCP versions to keep it.
 

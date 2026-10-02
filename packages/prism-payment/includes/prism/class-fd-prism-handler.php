@@ -145,11 +145,12 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         $existing   = $input['checkout_meta'][ self::HANDLER_ID ] ?? null;
 
         $resource_url = "$base_url/checkout-sessions/$session_id";
+        $version      = FD_UCP_Request_Context::current()->version();
 
-        // Idempotency: skip if resource URL and amount unchanged
         if ( $existing
             && ( $existing['prepared_resource_url'] ?? '' ) === $resource_url
             && ( $existing['prepared_amount'] ?? 0 ) === $total
+            && ( $existing['prepared_version'] ?? '' ) === $version
         ) {
             return $existing;
         }
@@ -162,17 +163,18 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             $currency,
             $resource_url,
             "$order_label at $store_name",
-            FD_UCP_Request_Context::current()->version()
+            $version
         );
 
         if ( ! $result ) {
-            return $existing; // fall back to previous quote
+            return $existing;
         }
 
         return array(
             'ucp'                  => $result,
             'prepared_amount'      => $total,
             'prepared_resource_url' => $resource_url,
+            'prepared_version'     => $version,
         );
     }
 

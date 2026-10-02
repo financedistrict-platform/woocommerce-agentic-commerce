@@ -209,6 +209,33 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( 'fd-woocommerce-prism/2026-01-23', $requests[1]['args']['headers']['User-Agent'] );
     }
 
+    public function test_prepare_reuses_the_quote_for_the_same_version_and_reprepares_for_another(): void {
+        $GLOBALS['fd_test_http_response'] = array( 'body' => '{"accepts":[{"scheme":"exact"}]}', 'response' => array( 'code' => 200 ) );
+        $handler = new FD_Prism_Handler( self::GW, 'key' );
+        $input   = array(
+            'total'             => 1000,
+            'currency'          => 'EUR',
+            'checkout_id'       => 'c1',
+            'checkout_base_url' => 'https://store.test',
+            'store_name'        => 'Store',
+        );
+
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-04-08' ) );
+        $first = $handler->prepare_checkout_payment( $input );
+        $this->assertSame( '2026-04-08', $first['prepared_version'] );
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+
+        $input['checkout_meta'] = array( 'xyz.fd.prism_payment' => $first );
+        $handler->prepare_checkout_payment( $input );
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $second = $handler->prepare_checkout_payment( $input );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+        $this->assertSame( '2026-08-25', $second['prepared_version'] );
+        $this->assertSame( 'fd-woocommerce-prism/2026-08-25', $GLOBALS['fd_test_requests'][1]['args']['headers']['User-Agent'] );
+    }
+
     public function test_third_party_handler_without_versioned_interface_is_still_listed(): void {
         $third_party = new class() implements FD_Payment_Handler {
             public function id(): string { return 'com.example.pay'; }
