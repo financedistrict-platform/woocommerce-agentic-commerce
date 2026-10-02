@@ -9,7 +9,9 @@ final class UcpErrorTest extends TestCase {
         FD_Test_WP::reset();
     }
 
-    public function test_error_response_structure(): void {
+    public function test_error_response_structure_in_2026_04_08(): void {
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-04-08' ) );
+
         $response = FD_UCP_Error::response( 'test_code', 'Something went wrong', 422 );
 
         $this->assertSame( 422, $response->get_status() );

@@ -6,12 +6,14 @@ class FD_UCP_Installer {
     public static function install(): void {
         self::create_tables();
         self::flush_rules();
+        self::seed_version_option();
         update_option( 'fd_ucp_db_version', FD_UCP_DB_VERSION );
     }
 
     public static function maybe_upgrade(): void {
         if ( get_option( 'fd_ucp_db_version' ) !== FD_UCP_DB_VERSION ) {
             self::create_tables();
+            self::seed_version_option();
             add_action( 'init', array( __CLASS__, 'flush_rewrite_rules_after_upgrade' ), 20 );
             update_option( 'fd_ucp_db_version', FD_UCP_DB_VERSION );
         }
@@ -23,6 +25,16 @@ class FD_UCP_Installer {
 
     public static function deactivate(): void {
         flush_rewrite_rules();
+    }
+
+    private static function seed_version_option(): void {
+        if ( false === get_option( 'fd_ucp_db_version' ) ) {
+            add_option( FD_UCP_Version_Registry::OPTION_CURRENT, FD_UCP_Version_Registry::LATEST );
+            return;
+        }
+        $pinned = FD_UCP_Version_Registry::SINGLE_VERSION_RELEASE_CURRENT;
+        add_option( FD_UCP_Version_Registry::OPTION_CURRENT, $pinned );
+        add_option( FD_UCP_Version_Registry::OPTION_SUPPORTED, array_values( array_diff( FD_UCP_Version_Registry::known(), array( $pinned ) ) ) );
     }
 
     private static function create_tables(): void {

@@ -24,6 +24,9 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $this->db->sessions[ self::SESSION_ID ] = $session;
         $GLOBALS['wpdb']                  = $this->db;
 
+        FD_Test_WP::$options['fd_ucp_db_version'] = '1.1.0';
+        FD_UCP_Installer::maybe_upgrade();
+
         $this->order                      = new WC_Order();
         FD_Test_Order_Store::$orders      = array( 1001 => $this->order );
 

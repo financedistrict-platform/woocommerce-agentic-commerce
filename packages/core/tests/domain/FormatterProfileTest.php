@@ -15,7 +15,7 @@ final class FormatterProfileTest extends TestCase {
 
     public function test_default_profile_declares_ucp_version(): void {
         $profile = FD_UCP_Formatter::format_profile( 'https://store.test/wp-json/fd-ucp/v1', new FD_Payment_Registry() );
-        $this->assertSame( '2026-04-08', $profile['ucp']['version'] );
+        $this->assertSame( FD_UCP_Version_Registry::LATEST, $profile['ucp']['version'] );
     }
 
     public function test_profile_declares_ucp_version(): void {

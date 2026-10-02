@@ -29,9 +29,13 @@ final class Wire20260408GoldenTest extends TestCase {
         );
     }
 
+    private static function upgraded_store_supported(): array {
+        return array_values( array_diff( FD_UCP_Version_Registry::known(), array( self::VERSION ) ) );
+    }
+
     public function test_default_supported_versions_only_add_the_supported_versions_key(): void {
         $original = json_decode( FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry() )['profile'], true );
-        $default  = json_decode( FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry(), FD_UCP_Version_Registry::DEFAULT_SUPPORTED )['profile'], true );
+        $default  = json_decode( FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry(), self::upgraded_store_supported() )['profile'], true );
 
         $this->assertSame(
             array(
@@ -46,7 +50,7 @@ final class Wire20260408GoldenTest extends TestCase {
 
     public function test_default_supported_versions_leave_other_documents_unchanged(): void {
         $original = FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry() );
-        $default  = FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry(), FD_UCP_Version_Registry::DEFAULT_SUPPORTED );
+        $default  = FD_Test_Golden_Renderer::render( self::VERSION, new FD_Payment_Registry(), self::upgraded_store_supported() );
 
         unset( $original['profile'], $default['profile'] );
         $this->assertSame( $original, $default );
@@ -62,7 +66,7 @@ final class Wire20260408GoldenTest extends TestCase {
     }
 
     public function test_root_profile_lists_enabled_versions_with_leaf_urls(): void {
-        $result = FD_UCP_Discovery::render( new FD_UCP_Version_Registry(), '', new FD_Payment_Registry() );
+        $result = FD_UCP_Discovery::render( new FD_UCP_Version_Registry( self::VERSION, self::upgraded_store_supported() ), '', new FD_Payment_Registry() );
 
         $this->assertSame( self::VERSION, $result['body']['ucp']['version'] );
         $this->assertSame( array( '2026-08-25', '2026-01-23' ), array_keys( $result['body']['ucp']['supported_versions'] ) );

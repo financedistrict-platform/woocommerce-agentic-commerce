@@ -3,8 +3,11 @@ defined( 'ABSPATH' ) || exit;
 
 final class FD_UCP_Version_Registry {
 
-    public const DEFAULT_CURRENT     = '2026-04-08';
-    public const DEFAULT_SUPPORTED   = array( '2026-08-25', '2026-01-23' );
+    public const LATEST                         = '2026-08-25';
+    public const DEFAULT_CURRENT                = self::LATEST;
+    public const SINGLE_VERSION_RELEASE_CURRENT = '2026-04-08';
+    public const DEFAULT_SUPPORTED              = array( '2026-04-08', '2026-01-23' );
+
     public const NEGOTIATION_LENIENT = 'lenient';
     public const NEGOTIATION_STRICT  = 'strict';
 

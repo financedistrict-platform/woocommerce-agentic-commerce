@@ -44,6 +44,20 @@ function update_option( string $key, $value, $autoload = null ): bool {
     return true;
 }
 
+function add_option( string $key, $value = '', $deprecated = '', $autoload = null ): bool {
+    if ( array_key_exists( $key, FD_Test_WP::$options ) ) {
+        return false;
+    }
+    FD_Test_WP::$options[ $key ] = $value;
+    return true;
+}
+
+function add_rewrite_rule( string $regex, string $query, string $after = 'bottom' ): void {
+}
+
+function flush_rewrite_rules(): void {
+}
+
 function delete_option( string $key ): bool {
     unset( FD_Test_WP::$options[ $key ] );
     return true;
@@ -256,6 +270,10 @@ final class FD_Test_Wpdb {
     public string $prefix = 'wp_';
     public array $sessions = array();
     public array $updates  = array();
+
+    public function get_charset_collate(): string {
+        return '';
+    }
 
     public function prepare( string $query, ...$args ): string {
         return vsprintf( str_replace( '%s', "'%s'", $query ), $args );

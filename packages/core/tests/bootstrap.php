@@ -4,7 +4,7 @@
  * so pure-logic classes can be tested without a running WP instance.
  */
 
-define( 'ABSPATH', '/tmp/wp/' );
+define( 'ABSPATH', __DIR__ . '/support/wp/' );
 
 // Minimal WP_Error stub
 if ( ! class_exists( 'WP_Error' ) ) {
@@ -74,9 +74,15 @@ if ( ! defined( 'FD_UCP_VERSION' ) ) {
     define( 'FD_UCP_VERSION', $fd_ucp_version[1] );
 }
 
+if ( ! defined( 'FD_UCP_DB_VERSION' ) ) {
+    preg_match( "/define\( 'FD_UCP_DB_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-ucp.php' ), $fd_ucp_db_version );
+    define( 'FD_UCP_DB_VERSION', $fd_ucp_db_version[1] );
+}
+
 // Load testable domain classes
 $base = dirname( __DIR__ ) . '/includes';
 
+require_once $base . '/class-fd-ucp-installer.php';
 require_once $base . '/ucp/class-fd-ucp-address.php';
 require_once $base . '/ucp/class-fd-ucp-status.php';
 require_once $base . '/payment/interface-fd-payment-handler.php';

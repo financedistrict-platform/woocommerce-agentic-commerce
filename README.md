@@ -118,8 +118,8 @@ Activate **UCP Core** first, then any payment handlers. Handlers hook into UCP a
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `fd_ucp_version` | `2026-04-08` | Version served when the agent does not ask for another one |
-| `fd_ucp_supported_versions` | `2026-08-25`, `2026-01-23` | Extra versions, listed in `ucp.supported_versions` and served at `/.well-known/ucp/<version>` |
+| `fd_ucp_version` | latest (currently `2026-08-25`) | Version served when the agent does not ask for another one. Stores upgraded from a release before 0.3.0 keep `2026-04-08` until changed in settings |
+| `fd_ucp_supported_versions` | every other version (currently `2026-04-08`, `2026-01-23`) | Extra versions, listed in `ucp.supported_versions` and served at `/.well-known/ucp/<version>` |
 | `fd_ucp_version_negotiation` | `lenient` | `lenient` or `strict` (see below) |
 
 The store reads the agent profile URL from the `UCP-Agent` header (`profile="https://..."`) and uses the `ucp.version` it declares. A checkout session or cart keeps the version it was created with; a later request that declares a different version gets `422 version_unsupported`.

@@ -72,7 +72,7 @@ final class SessionPinTest extends TestCase {
         ) );
 
         $this->assertNull( $plugin->pin_session( new WP_REST_Request(), null ) );
-        $this->assertSame( '2026-04-08', FD_UCP_Request_Context::current()->version() );
+        $this->assertSame( FD_UCP_Version_Registry::LATEST, FD_UCP_Request_Context::current()->version() );
 
         $this->assertNull( $plugin->pin_session( new WP_REST_Request( '/fd-ucp/v1', array( 'UCP-Agent' => 'profile="https://agent.example/p"' ) ), null ) );
         $this->assertSame( '2026-08-25', FD_UCP_Request_Context::current()->version() );
