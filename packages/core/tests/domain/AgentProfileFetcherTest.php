@@ -149,7 +149,18 @@ final class AgentProfileFetcherTest extends TestCase {
         $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
 
         $this->assertSame( '2026-01-23', $result['version'] );
-        $this->assertSame( 'https://AGENT.example/p/', FD_Test_WP::$requests[1]['url'] );
+        $this->assertSame( 'https://agent.example/p/', FD_Test_WP::$requests[1]['url'] );
+    }
+
+    public function test_hop_with_mixed_case_host_is_requested_in_lowercase_on_the_pinned_ip(): void {
+        $this->redirect( 301, 'https://Agent.Example/P/' );
+        $this->declare_version( '2026-01-23' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://Agent.Example/p' );
+
+        $this->assertSame( '2026-01-23', $result['version'] );
+        $this->assertSame( 'https://agent.example/P/', FD_Test_WP::$requests[1]['url'] );
+        $this->assertSame( 0, FD_Test_WP::hook_count( 'http_api_curl' ) );
     }
 
     public function test_hop_shares_the_time_budget(): void {

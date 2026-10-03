@@ -87,9 +87,13 @@ class FD_UCP_Version_Resolver {
 
     private function reject( ?string $declared, string $outcome, string $host, int $status, string $code, string $message, ?string $location = null ): FD_UCP_Request_Context {
         do_action( 'fd_ucp_profile_resolution', $outcome, null, $host );
+        $log = array( 'source' => 'fd-ucp', 'ucp_profile_resolution' => $outcome );
+        if ( FD_UCP_Request_Context::OUTCOME_REDIRECTED === $outcome ) {
+            $log['location'] = $location;
+        }
         wc_get_logger()->warning(
             sprintf( 'UCP agent profile resolution %s for %s rejected with %s', $outcome, $host, $code ),
-            array( 'source' => 'fd-ucp', 'ucp_profile_resolution' => $outcome, 'location' => $location )
+            $log
         );
         return new FD_UCP_Request_Context(
             $this->versions,

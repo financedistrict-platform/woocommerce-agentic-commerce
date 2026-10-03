@@ -87,7 +87,7 @@ class FD_UCP_Agent_Profile_Fetcher {
             return array( 'failed' => true );
         }
 
-        $followed = $this->request( $location, $target['host'], $target['port'], $target['ip'], $remaining );
+        $followed = $this->request( $this->rebuilt( wp_parse_url( $location ), $hop['host'] ), $target['host'], $target['port'], $target['ip'], $remaining );
         if ( null === $followed ) {
             return array( 'failed' => true );
         }
@@ -110,11 +110,14 @@ class FD_UCP_Agent_Profile_Fetcher {
         if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
             return null;
         }
-        $clean = $parts['scheme'] . '://' . $parts['host']
+        return substr( $this->rebuilt( $parts, $parts['host'] ), 0, 512 );
+    }
+
+    private function rebuilt( array $parts, string $host ): string {
+        return $parts['scheme'] . '://' . $host
             . ( isset( $parts['port'] ) ? ':' . $parts['port'] : '' )
             . ( $parts['path'] ?? '' )
             . ( isset( $parts['query'] ) ? '?' . $parts['query'] : '' );
-        return substr( $clean, 0, 512 );
     }
 
     private function is_redirect( int $code ): bool {

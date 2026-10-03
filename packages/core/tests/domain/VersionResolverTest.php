@@ -155,6 +155,12 @@ final class VersionResolverTest extends TestCase {
         $this->assertSame( 'https://other.example/p', FD_Test_WP::$logs[0]['context']['location'] );
     }
 
+    public function test_other_rejections_log_without_a_location_key(): void {
+        self::resolve_with( FD_Test_Fixture_Profile_Fetcher::declaring( '2026-01-11' ) );
+
+        $this->assertSame( array( 'source' => 'fd-ucp', 'ucp_profile_resolution' => 'unknown' ), FD_Test_WP::$logs[0]['context'] );
+    }
+
     public function test_redirect_without_location_uses_the_short_message(): void {
         $context = self::resolve_redirect( null );
 
