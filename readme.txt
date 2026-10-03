@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.3.5
+Stable tag: 0.3.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -69,6 +69,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 2. Prism gateway settings in WooCommerce
 
 == Changelog ==
+
+= 0.3.6 =
+* Prism calls use the UCP version in the path. User-Agent is fd-woocommerce-prism/0.3.6. Settle no longer sends a UCP version. Needs Prism with versioned routes.
 
 = 0.3.5 =
 * Agent profile fetch: the 128 KiB size cap is now enforced (an oversized profile is rejected instead of being truncated and parsed), and the same-origin redirect hop reuses the already validated address instead of resolving DNS a second time.

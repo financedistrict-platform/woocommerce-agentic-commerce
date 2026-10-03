@@ -26,9 +26,6 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         return 'Prism Stablecoin';
     }
 
-    // =========================================================================
-    // Discovery
-    // =========================================================================
 
     public static function cache_key( string $api_url, string $ucp_version ): string {
         return self::CACHE_PREFIX . md5( $api_url . '|' . $ucp_version );
@@ -132,12 +129,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         return null;
     }
 
-    // =========================================================================
-    // Checkout Prepare
-    // =========================================================================
 
     public function prepare_checkout_payment( array $input ): ?array {
-        $total      = (int) $input['total']; // minor units
+        $total      = (int) $input['total'];
         $currency   = $input['currency'];
         $session_id = $input['checkout_id'];
         $base_url   = $input['checkout_base_url'];
@@ -178,9 +172,6 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         );
     }
 
-    // =========================================================================
-    // Settlement
-    // =========================================================================
 
     public function settle_payment( array $input ): array {
         $credential = $input['credential'];
@@ -204,7 +195,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $result = $this->client->settle( $authorization, FD_UCP_Request_Context::current()->version() );
+        $result = $this->client->settle( $authorization );
         if ( ! $result ) {
             return array(
                 'success' => false,
@@ -212,7 +203,6 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        // Normalize transaction reference across field name variants
         $tx_ref = $result['transaction'] ?? $result['transactionHash']
             ?? $result['facilitatorTransactionId'] ?? $result['txHash'] ?? '';
 
@@ -255,9 +245,6 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         );
     }
 
-    // =========================================================================
-    // Checkout Response
-    // =========================================================================
 
     public function get_ucp_checkout_handlers( ?array $payment_meta = null ): array {
         $prism_data = $payment_meta[ self::HANDLER_ID ] ?? null;
@@ -265,13 +252,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             return array();
         }
 
-        // The UCP prepare response is already in the right shape
         return $prism_data['ucp'];
     }
 
-    // =========================================================================
-    // Helpers
-    // =========================================================================
 
     private function decode_credential( $credential ): ?array {
         if ( is_string( $credential ) ) {
