@@ -46,14 +46,6 @@ class FD_Prism_Client {
         return $this->post( "/api/v{$version}/payment/settle", $body, $ucp_version );
     }
 
-    /**
-     * POST /api/v2/payment/verify — verify x402 authorization.
-     */
-    public function verify( array $x402_authorization, string $ucp_version ): ?array {
-        $version = (int) ( $x402_authorization['x402Version'] ?? 2 );
-        return $this->post( "/api/v{$version}/payment/verify", $x402_authorization, $ucp_version );
-    }
-
     private function get( string $path, string $ucp_version ): ?array {
         $response = wp_remote_get( $this->api_url . $path, array(
             'headers' => $this->headers( $ucp_version ),

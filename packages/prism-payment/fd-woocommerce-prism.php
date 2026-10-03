@@ -3,7 +3,7 @@
  * Plugin Name: Finance District Prism Payment
  * Plugin URI: https://developers.fd.xyz
  * Description: Stablecoin payment handler for WooCommerce UCP via Finance District Prism.
- * Version: 0.3.3
+ * Version: 0.3.4
  * Author: Finance District (1st Digital)
  * Author URI: https://fd.xyz
  * Requires at least: 6.4
@@ -16,7 +16,7 @@
  */
 defined('ABSPATH') || exit;
 
-define( 'FD_PRISM_VERSION', '0.3.3' );
+define( 'FD_PRISM_VERSION', '0.3.4' );
 
 add_action( 'before_woocommerce_init', function () {
     if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
