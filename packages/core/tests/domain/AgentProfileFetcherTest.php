@@ -62,7 +62,7 @@ final class AgentProfileFetcherTest extends TestCase {
 
         $this->assertSame( '2026-08-25', $result['version'] );
         $this->assertSame( FD_UCP_Agent_Profile_Fetcher::TIMEOUT, $args['timeout'] );
-        $this->assertSame( FD_UCP_Agent_Profile_Fetcher::MAX_BYTES, $args['limit_response_size'] );
+        $this->assertSame( FD_UCP_Agent_Profile_Fetcher::MAX_BYTES + 1, $args['limit_response_size'] );
         $this->assertSame( 0, $args['redirection'] );
         $this->assertSame( 'fd-woocommerce-ucp/' . FD_UCP_VERSION, $args['user-agent'] );
     }
@@ -163,6 +163,24 @@ final class AgentProfileFetcherTest extends TestCase {
         $this->assertSame( 0, FD_Test_WP::hook_count( 'http_api_curl' ) );
     }
 
+    public function test_hop_does_not_resolve_dns_again(): void {
+        $this->redirect( 301, '/p/' );
+        $this->declare_version( '2026-01-23' );
+        $fetcher = new class() extends FD_UCP_Agent_Profile_Fetcher {
+            public int $lookups = 0;
+
+            protected function resolve_host( string $host ): array {
+                $this->lookups++;
+                return array( '93.184.216.34' );
+            }
+        };
+
+        $result = $fetcher->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( '2026-01-23', $result['version'] );
+        $this->assertSame( 1, $fetcher->lookups );
+    }
+
     public function test_hop_shares_the_time_budget(): void {
         $this->redirect( 302, '/p/' );
         $this->declare_version( '2026-01-23' );
@@ -170,7 +188,7 @@ final class AgentProfileFetcherTest extends TestCase {
         $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
         $args = FD_Test_WP::$requests[1]['args'];
 
-        $this->assertSame( FD_UCP_Agent_Profile_Fetcher::MAX_BYTES, $args['limit_response_size'] );
+        $this->assertSame( FD_UCP_Agent_Profile_Fetcher::MAX_BYTES + 1, $args['limit_response_size'] );
         $this->assertSame( 0, $args['redirection'] );
         $this->assertGreaterThan( 0, $args['timeout'] );
         $this->assertLessThanOrEqual( FD_UCP_Agent_Profile_Fetcher::TIMEOUT, $args['timeout'] );
