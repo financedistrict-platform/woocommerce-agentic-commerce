@@ -201,6 +201,14 @@ final class AgentProfileFetcherTest extends TestCase {
         $this->assertCount( 1, FD_Test_WP::$requests );
     }
 
+    public function test_reported_location_never_carries_credentials(): void {
+        $this->redirect( 301, 'https://user:secret@other.example:8443/p?a=1#frag' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( 'https://other.example:8443/p?a=1', $result['location'] );
+    }
+
     public function test_https_to_http_downgrade_is_reported(): void {
         $this->redirect( 301, 'http://agent.example/p' );
 

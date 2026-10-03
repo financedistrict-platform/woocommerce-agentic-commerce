@@ -101,8 +101,20 @@ class FD_UCP_Agent_Profile_Fetcher {
         return array(
             'failed'   => true,
             'reason'   => 'redirected',
-            'location' => null === $location ? null : substr( $location, 0, 512 ),
+            'location' => null === $location ? null : $this->without_userinfo( $location ),
         );
+    }
+
+    private function without_userinfo( string $location ): ?string {
+        $parts = wp_parse_url( $location );
+        if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+            return null;
+        }
+        $clean = $parts['scheme'] . '://' . $parts['host']
+            . ( isset( $parts['port'] ) ? ':' . $parts['port'] : '' )
+            . ( $parts['path'] ?? '' )
+            . ( isset( $parts['query'] ) ? '?' . $parts['query'] : '' );
+        return substr( $clean, 0, 512 );
     }
 
     private function is_redirect( int $code ): bool {

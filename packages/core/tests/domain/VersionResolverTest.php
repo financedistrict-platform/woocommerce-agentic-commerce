@@ -134,6 +134,27 @@ final class VersionResolverTest extends TestCase {
         }
     }
 
+    public function test_credentials_in_the_redirect_location_reach_neither_message_nor_log(): void {
+        FD_Test_WP::$http_queue[] = array(
+            'body'     => '',
+            'response' => array( 'code' => 301 ),
+            'headers'  => array( 'location' => 'https://user:secret@other.example/p' ),
+        );
+        $versions = new FD_UCP_Version_Registry();
+        $fetcher  = new class() extends FD_UCP_Agent_Profile_Fetcher {
+            protected function resolve_host( string $host ): array {
+                return array( '93.184.216.34' );
+            }
+        };
+        $context  =( new FD_UCP_Version_Resolver( $versions, $fetcher ) )->resolve( 'profile="https://agent.example/p"' );
+
+        $this->assertSame( 'redirected', $context->outcome() );
+        $this->assertStringNotContainsString( 'secret', json_encode( $context->rejection() ) );
+        $this->assertStringNotContainsString( 'user@', json_encode( $context->rejection() ) );
+        $this->assertStringNotContainsString( 'secret', json_encode( FD_Test_WP::$logs ) );
+        $this->assertSame( 'https://other.example/p', FD_Test_WP::$logs[0]['context']['location'] );
+    }
+
     public function test_redirect_without_location_uses_the_short_message(): void {
         $context = self::resolve_redirect( null );
 
