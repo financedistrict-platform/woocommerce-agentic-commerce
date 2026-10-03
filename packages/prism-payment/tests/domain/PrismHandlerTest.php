@@ -176,14 +176,12 @@ final class PrismHandlerTest extends TestCase {
         $client->fetch_ucp_handlers( '2026-08-25' );
         $client->prepare_ucp_payment( '10.00', 'EUR', 'https://store.test/c/1', 'Order', '2026-04-08' );
         $client->settle( array( 'x402Version' => 2, 'paymentPayload' => array() ), '2026-01-23' );
-        $client->verify( array( 'x402Version' => 2 ), '2026-08-25' );
 
         $requests = $GLOBALS['fd_test_requests'];
-        $this->assertCount( 4, $requests );
+        $this->assertCount( 3, $requests );
         $this->assertSame( 'fd-woocommerce-prism/2026-08-25', $requests[0]['args']['headers']['User-Agent'] );
         $this->assertSame( 'fd-woocommerce-prism/2026-04-08', $requests[1]['args']['headers']['User-Agent'] );
         $this->assertSame( 'fd-woocommerce-prism/2026-01-23', $requests[2]['args']['headers']['User-Agent'] );
-        $this->assertSame( 'fd-woocommerce-prism/2026-08-25', $requests[3]['args']['headers']['User-Agent'] );
         $this->assertSame( self::GW . '/api/v2/merchant/ucp/handlers', $requests[0]['url'] );
         foreach ( $requests as $request ) {
             $this->assertStringNotContainsString( 'ucp_version', $request['url'] );
