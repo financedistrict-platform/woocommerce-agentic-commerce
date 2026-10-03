@@ -10,6 +10,7 @@ final class FD_Test_WP {
     public static array $logs       = array();
     public static array $requests   = array();
     public static $http_response    = null;
+    public static array $http_queue = array();
 
     public static function reset(): void {
         self::$options       = array();
@@ -20,6 +21,7 @@ final class FD_Test_WP {
         self::$logs          = array();
         self::$requests      = array();
         self::$http_response = null;
+        self::$http_queue    = array();
         FD_UCP_Request_Context::set( null );
     }
 
@@ -129,7 +131,40 @@ function wp_parse_url( string $url, int $component = -1 ) {
 function wp_safe_remote_get( string $url, array $args = array() ) {
     FD_Test_WP::$requests[] = array( 'url' => $url, 'args' => $args );
     do_action( 'http_api_curl', curl_init(), $args, $url );
+    if ( ! empty( FD_Test_WP::$http_queue ) ) {
+        return array_shift( FD_Test_WP::$http_queue );
+    }
     return FD_Test_WP::$http_response ?? new WP_Error( 'http_request_failed', 'no response' );
+}
+
+function wp_remote_retrieve_header( $response, string $header ) {
+    return $response['headers'][ strtolower( $header ) ] ?? '';
+}
+
+final class WP_Http {
+
+    public static function make_absolute_url( string $maybe_relative_path, string $url ): string {
+        if ( empty( $url ) ) {
+            return $maybe_relative_path;
+        }
+        $parts = parse_url( $maybe_relative_path );
+        if ( isset( $parts['scheme'] ) ) {
+            return $maybe_relative_path;
+        }
+        $base = parse_url( $url );
+        if ( ! isset( $base['scheme'] ) || ! isset( $base['host'] ) ) {
+            return $maybe_relative_path;
+        }
+        $origin = $base['scheme'] . '://' . $base['host'] . ( isset( $base['port'] ) ? ':' . $base['port'] : '' );
+        if ( str_starts_with( $maybe_relative_path, '//' ) ) {
+            return $base['scheme'] . ':' . $maybe_relative_path;
+        }
+        if ( str_starts_with( $maybe_relative_path, '/' ) ) {
+            return $origin . $maybe_relative_path;
+        }
+        $dir = preg_replace( '#[^/]*$#', '', $base['path'] ?? '/' );
+        return $origin . $dir . $maybe_relative_path;
+    }
 }
 
 function wp_remote_get( string $url, array $args = array() ) {

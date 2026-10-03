@@ -112,4 +112,44 @@ final class VersionResolverTest extends TestCase {
             FD_Test_WP::$actions
         );
     }
+
+    private static function resolve_redirect( ?string $location, string $negotiation = 'lenient' ): FD_UCP_Request_Context {
+        $versions = new FD_UCP_Version_Registry( FD_UCP_Version_Registry::DEFAULT_CURRENT, FD_UCP_Version_Registry::DEFAULT_SUPPORTED, $negotiation );
+        $fetcher  = new FD_Test_Fixture_Profile_Fetcher( array( self::PROFILE => FD_Test_Fixture_Profile_Fetcher::redirecting( $location ) ) );
+        return ( new FD_UCP_Version_Resolver( $versions, $fetcher ) )->resolve( 'profile="' . self::PROFILE . '"' );
+    }
+
+    public function test_cross_origin_redirect_is_rejected_in_both_modes_with_the_location(): void {
+        foreach ( array( 'lenient', 'strict' ) as $mode ) {
+            FD_Test_WP::reset();
+            $context = self::resolve_redirect( 'https://other.example/profile', $mode );
+
+            $this->assertSame( 'redirected', $context->outcome(), $mode );
+            $this->assertFalse( $context->is_fallback(), $mode );
+            $this->assertSame( 424, $context->rejection()['status'], $mode );
+            $this->assertSame( 'profile_redirected', $context->rejection()['code'], $mode );
+            $this->assertSame( 'Agent profile URL redirects to https://other.example/profile; use the final URL.', $context->rejection()['message'], $mode );
+            $this->assertSame( 'https://other.example/profile', FD_Test_WP::$logs[0]['context']['location'], $mode );
+            $this->assertSame( 'redirected', FD_Test_WP::$logs[0]['context']['ucp_profile_resolution'], $mode );
+        }
+    }
+
+    public function test_redirect_without_location_uses_the_short_message(): void {
+        $context = self::resolve_redirect( null );
+
+        $this->assertSame( 424, $context->rejection()['status'] );
+        $this->assertSame( 'Agent profile URL redirects; use the final URL.', $context->rejection()['message'] );
+        $this->assertNull( FD_Test_WP::$logs[0]['context']['location'] );
+    }
+
+    public function test_cached_redirect_still_logs_the_location(): void {
+        $fetcher  = new FD_Test_Fixture_Profile_Fetcher( array( self::PROFILE => FD_Test_Fixture_Profile_Fetcher::redirecting( 'https://other.example/profile' ) ) );
+        $resolver = new FD_UCP_Version_Resolver( new FD_UCP_Version_Registry(), $fetcher );
+
+        $resolver->resolve( 'profile="' . self::PROFILE . '"' );
+        $resolver->resolve( 'profile="' . self::PROFILE . '"' );
+
+        $this->assertCount( 2, FD_Test_WP::$logs );
+        $this->assertSame( 'https://other.example/profile', FD_Test_WP::$logs[1]['context']['location'] );
+    }
 }
