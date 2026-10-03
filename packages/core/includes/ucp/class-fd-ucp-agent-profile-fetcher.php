@@ -77,8 +77,8 @@ class FD_UCP_Agent_Profile_Fetcher {
             return $this->redirected( null );
         }
 
-        $hop = $this->validated_target( $location );
-        if ( null === $hop || ! $this->same_origin( $url, $location ) || $hop['port'] !== $target['port'] ) {
+        $hop = wp_parse_url( $location );
+        if ( ! $this->is_same_target( $url, $location, $hop, $target ) ) {
             return $this->redirected( $location );
         }
 
@@ -87,7 +87,7 @@ class FD_UCP_Agent_Profile_Fetcher {
             return array( 'failed' => true );
         }
 
-        $followed = $this->request( $this->rebuilt( wp_parse_url( $location ), $hop['host'] ), $target['host'], $target['port'], $target['ip'], $remaining );
+        $followed = $this->request( $this->rebuilt( $hop, $target['host'] ), $target['host'], $target['port'], $target['ip'], $remaining );
         if ( null === $followed ) {
             return array( 'failed' => true );
         }
@@ -133,6 +133,14 @@ class FD_UCP_Agent_Profile_Fetcher {
         $hash     = strpos( $absolute, '#' );
         $absolute = false === $hash ? $absolute : substr( $absolute, 0, $hash );
         return '' === $absolute ? null : $absolute;
+    }
+
+    private function is_same_target( string $from, string $to, $hop, array $target ): bool {
+        if ( ! is_array( $hop ) || isset( $hop['user'] ) || isset( $hop['pass'] ) || ! $this->same_origin( $from, $to ) ) {
+            return false;
+        }
+        $default_port = 'https' === strtolower( $hop['scheme'] ?? '' ) ? 443 : 80;
+        return (int) ( $hop['port'] ?? $default_port ) === $target['port'];
     }
 
     private function same_origin( string $from, string $to ): bool {
@@ -189,7 +197,7 @@ class FD_UCP_Agent_Profile_Fetcher {
 
         $response = wp_safe_remote_get( $url, array(
             'timeout'             => $timeout,
-            'limit_response_size' => self::MAX_BYTES,
+            'limit_response_size' => self::MAX_BYTES + 1,
             'redirection'         => 0,
             'user-agent'          => 'fd-woocommerce-ucp/' . FD_UCP_VERSION,
         ) );

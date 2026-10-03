@@ -11,6 +11,7 @@ final class FD_Test_WP {
     public static array $requests   = array();
     public static $http_response    = null;
     public static array $http_queue = array();
+    public static bool $live_http   = false;
 
     public static function reset(): void {
         self::$options       = array();
@@ -22,6 +23,7 @@ final class FD_Test_WP {
         self::$requests      = array();
         self::$http_response = null;
         self::$http_queue    = array();
+        self::$live_http     = false;
         FD_UCP_Request_Context::set( null );
     }
 
@@ -130,11 +132,52 @@ function wp_parse_url( string $url, int $component = -1 ) {
 
 function wp_safe_remote_get( string $url, array $args = array() ) {
     FD_Test_WP::$requests[] = array( 'url' => $url, 'args' => $args );
+    if ( FD_Test_WP::$live_http ) {
+        return fd_test_live_get( $url, $args );
+    }
     do_action( 'http_api_curl', curl_init(), $args, $url );
     if ( ! empty( FD_Test_WP::$http_queue ) ) {
         return array_shift( FD_Test_WP::$http_queue );
     }
     return FD_Test_WP::$http_response ?? new WP_Error( 'http_request_failed', 'no response' );
+}
+
+function fd_test_live_get( string $url, array $args ) {
+    $headers = array();
+    $body    = '';
+    $limit   = (int) ( $args['limit_response_size'] ?? 0 );
+    $handle  = curl_init( $url );
+    curl_setopt_array( $handle, array(
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_TIMEOUT_MS     => (int) round( ( (float) ( $args['timeout'] ?? 5 ) ) * 1000 ),
+        CURLOPT_USERAGENT      => $args['user-agent'] ?? '',
+        CURLOPT_HEADERFUNCTION => static function ( $h, string $line ) use ( &$headers ): int {
+            if ( str_contains( $line, ':' ) ) {
+                list( $name, $value ) = explode( ':', $line, 2 );
+                $headers[ strtolower( trim( $name ) ) ] = trim( $value );
+            }
+            return strlen( $line );
+        },
+        CURLOPT_WRITEFUNCTION  => static function ( $h, string $chunk ) use ( &$body, $limit ): int {
+            $length = strlen( $chunk );
+            if ( $limit > 0 && strlen( $body ) + $length > $limit ) {
+                $chunk = substr( $chunk, 0, $limit - strlen( $body ) );
+                $body .= $chunk;
+                return $length;
+            }
+            $body .= $chunk;
+            return $length;
+        },
+    ) );
+    do_action( 'http_api_curl', $handle, $args, $url );
+    $ok   = curl_exec( $handle );
+    $code = (int) curl_getinfo( $handle, CURLINFO_RESPONSE_CODE );
+    $err  = curl_error( $handle );
+    curl_close( $handle );
+    if ( false === $ok ) {
+        return new WP_Error( 'http_request_failed', $err );
+    }
+    return array( 'body' => $body, 'response' => array( 'code' => $code ), 'headers' => $headers );
 }
 
 function wp_remote_retrieve_header( $response, string $header ) {
