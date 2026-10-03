@@ -38,12 +38,28 @@ class FD_UCP_Agent_Profile_Fetcher {
             return array( 'failed' => true );
         }
 
-        $body = $this->request( $url, $target['host'], $target['port'], $target['ip'] );
-        if ( null === $body || strlen( $body ) > self::MAX_BYTES ) {
+        $started  = microtime( true );
+        $response = $this->request( $url, $target['host'], $target['port'], $target['ip'], self::TIMEOUT );
+        if ( null === $response ) {
             return array( 'failed' => true );
         }
 
-        $profile = json_decode( $body, true );
+        if ( $this->is_redirect( $response['code'] ) ) {
+            $response = $this->follow( $url, $target, $response, $started );
+            if ( isset( $response['failed'] ) ) {
+                return $response;
+            }
+        }
+
+        return $this->parse( $response );
+    }
+
+    private function parse( array $response ): array {
+        if ( 200 !== $response['code'] || strlen( $response['body'] ) > self::MAX_BYTES ) {
+            return array( 'failed' => true );
+        }
+
+        $profile = json_decode( $response['body'], true );
         if ( ! is_array( $profile ) ) {
             return array( 'failed' => true );
         }
@@ -53,6 +69,77 @@ class FD_UCP_Agent_Profile_Fetcher {
             'version'    => is_string( $version ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $version ) ? $version : null,
             'fetched_at' => time(),
         );
+    }
+
+    private function follow( string $url, array $target, array $response, float $started ): array {
+        $location = $this->absolute_location( $url, $response['location'] );
+        if ( null === $location ) {
+            return $this->redirected( null );
+        }
+
+        $hop = $this->validated_target( $location );
+        if ( null === $hop || ! $this->same_origin( $url, $location ) || $hop['port'] !== $target['port'] ) {
+            return $this->redirected( $location );
+        }
+
+        $remaining = self::TIMEOUT - ( microtime( true ) - $started );
+        if ( $remaining <= 0 ) {
+            return array( 'failed' => true );
+        }
+
+        $followed = $this->request( $this->rebuilt( wp_parse_url( $location ), $hop['host'] ), $target['host'], $target['port'], $target['ip'], $remaining );
+        if ( null === $followed ) {
+            return array( 'failed' => true );
+        }
+        if ( $this->is_redirect( $followed['code'] ) ) {
+            return $this->redirected( $this->absolute_location( $location, $followed['location'] ) );
+        }
+        return $followed;
+    }
+
+    private function redirected( ?string $location ): array {
+        return array(
+            'failed'   => true,
+            'reason'   => 'redirected',
+            'location' => null === $location ? null : $this->without_userinfo( $location ),
+        );
+    }
+
+    private function without_userinfo( string $location ): ?string {
+        $parts = wp_parse_url( $location );
+        if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+            return null;
+        }
+        return substr( $this->rebuilt( $parts, $parts['host'] ), 0, 512 );
+    }
+
+    private function rebuilt( array $parts, string $host ): string {
+        return $parts['scheme'] . '://' . $host
+            . ( isset( $parts['port'] ) ? ':' . $parts['port'] : '' )
+            . ( $parts['path'] ?? '' )
+            . ( isset( $parts['query'] ) ? '?' . $parts['query'] : '' );
+    }
+
+    private function is_redirect( int $code ): bool {
+        return in_array( $code, array( 301, 302, 303, 307, 308 ), true );
+    }
+
+    private function absolute_location( string $base, ?string $location ): ?string {
+        $location = preg_replace( '/[\x00-\x1F\x7F]/', '', trim( (string) $location ) );
+        if ( '' === $location ) {
+            return null;
+        }
+        $absolute = WP_Http::make_absolute_url( $location, $base );
+        $hash     = strpos( $absolute, '#' );
+        $absolute = false === $hash ? $absolute : substr( $absolute, 0, $hash );
+        return '' === $absolute ? null : $absolute;
+    }
+
+    private function same_origin( string $from, string $to ): bool {
+        $a = wp_parse_url( $from );
+        $b = wp_parse_url( $to );
+        return strtolower( $a['scheme'] ?? '' ) === strtolower( $b['scheme'] ?? '' )
+            && strtolower( $a['host'] ?? '' ) === strtolower( $b['host'] ?? '' );
     }
 
     private function validated_target( string $url ): ?array {
@@ -93,7 +180,7 @@ class FD_UCP_Agent_Profile_Fetcher {
         return is_array( $ips ) ? $ips : array();
     }
 
-    protected function request( string $url, string $host, int $port, string $ip ): ?string {
+    protected function request( string $url, string $host, int $port, string $ip, int|float $timeout ): ?array {
         $pin = static function ( $handle ) use ( &$pin, $host, $port, $ip ): void {
             remove_action( 'http_api_curl', $pin, 10 );
             curl_setopt( $handle, CURLOPT_RESOLVE, array( "$host:$port:$ip" ) );
@@ -101,7 +188,7 @@ class FD_UCP_Agent_Profile_Fetcher {
         add_action( 'http_api_curl', $pin, 10, 1 );
 
         $response = wp_safe_remote_get( $url, array(
-            'timeout'             => self::TIMEOUT,
+            'timeout'             => $timeout,
             'limit_response_size' => self::MAX_BYTES,
             'redirection'         => 0,
             'user-agent'          => 'fd-woocommerce-ucp/' . FD_UCP_VERSION,
@@ -109,9 +196,14 @@ class FD_UCP_Agent_Profile_Fetcher {
 
         remove_action( 'http_api_curl', $pin, 10 );
 
-        if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+        if ( is_wp_error( $response ) ) {
             return null;
         }
-        return (string) wp_remote_retrieve_body( $response );
+        $location = wp_remote_retrieve_header( $response, 'location' );
+        return array(
+            'code'     => (int) wp_remote_retrieve_response_code( $response ),
+            'body'     => (string) wp_remote_retrieve_body( $response ),
+            'location' => is_string( $location ) ? $location : null,
+        );
     }
 }

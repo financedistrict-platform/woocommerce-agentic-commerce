@@ -9,6 +9,7 @@ final class FD_UCP_Request_Context {
     public const OUTCOME_UNDECLARED  = 'undeclared';
     public const OUTCOME_UNKNOWN     = 'unknown';
     public const OUTCOME_DISABLED    = 'disabled';
+    public const OUTCOME_REDIRECTED  = 'redirected';
 
     public const FALLBACK_OUTCOMES = array( self::OUTCOME_UNREACHABLE, self::OUTCOME_UNDECLARED );
 

@@ -39,6 +39,12 @@ class FD_UCP_Version_Resolver {
             return $this->served( $declared, $outcome, $declared, $host );
         }
 
+        if ( FD_UCP_Request_Context::OUTCOME_REDIRECTED === $outcome ) {
+            $location = $profile['location'] ?? null;
+            $message  = null === $location ? 'Agent profile URL redirects; use the final URL.' : sprintf( 'Agent profile URL redirects to %s; use the final URL.', $location );
+            return $this->reject( $declared, $outcome, $host, 424, 'profile_redirected', $message, $location );
+        }
+
         if ( FD_UCP_Request_Context::OUTCOME_DISABLED === $outcome || FD_UCP_Request_Context::OUTCOME_UNKNOWN === $outcome ) {
             return $this->reject( $declared, $outcome, $host, 422, 'version_unsupported', $this->unsupported_message( $declared ) );
         }
@@ -60,7 +66,7 @@ class FD_UCP_Version_Resolver {
 
     private function outcome( array $profile, ?string $declared ): string {
         if ( ! empty( $profile['failed'] ) ) {
-            return FD_UCP_Request_Context::OUTCOME_UNREACHABLE;
+            return 'redirected' === ( $profile['reason'] ?? null ) ? FD_UCP_Request_Context::OUTCOME_REDIRECTED : FD_UCP_Request_Context::OUTCOME_UNREACHABLE;
         }
         if ( null === $declared ) {
             return FD_UCP_Request_Context::OUTCOME_UNDECLARED;
@@ -79,11 +85,15 @@ class FD_UCP_Version_Resolver {
         return $this->context( $version, $outcome, $declared );
     }
 
-    private function reject( ?string $declared, string $outcome, string $host, int $status, string $code, string $message ): FD_UCP_Request_Context {
+    private function reject( ?string $declared, string $outcome, string $host, int $status, string $code, string $message, ?string $location = null ): FD_UCP_Request_Context {
         do_action( 'fd_ucp_profile_resolution', $outcome, null, $host );
+        $log = array( 'source' => 'fd-ucp', 'ucp_profile_resolution' => $outcome );
+        if ( FD_UCP_Request_Context::OUTCOME_REDIRECTED === $outcome ) {
+            $log['location'] = $location;
+        }
         wc_get_logger()->warning(
             sprintf( 'UCP agent profile resolution %s for %s rejected with %s', $outcome, $host, $code ),
-            array( 'source' => 'fd-ucp', 'ucp_profile_resolution' => $outcome )
+            $log
         );
         return new FD_UCP_Request_Context(
             $this->versions,

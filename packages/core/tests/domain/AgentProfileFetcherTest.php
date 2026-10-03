@@ -114,4 +114,164 @@ final class AgentProfileFetcherTest extends TestCase {
     public function test_credentials_in_url_are_rejected(): void {
         $this->assertTrue( $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://user:pw@agent.example/p' )['failed'] );
     }
+
+    private function redirect( int $code, ?string $location ): void {
+        FD_Test_WP::$http_queue[] = array(
+            'body'     => '',
+            'response' => array( 'code' => $code ),
+            'headers'  => null === $location ? array() : array( 'location' => $location ),
+        );
+    }
+
+    private function declare_version( string $version ): void {
+        FD_Test_WP::$http_queue[] = array(
+            'body'     => json_encode( array( 'ucp' => array( 'version' => $version ) ) ),
+            'response' => array( 'code' => 200 ),
+        );
+    }
+
+    public function test_same_origin_301_is_followed_once(): void {
+        $this->redirect( 301, '/.well-known/ucp/2026-08-25/' );
+        $this->declare_version( '2026-04-08' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/.well-known/ucp/2026-08-25' );
+
+        $this->assertSame( '2026-04-08', $result['version'] );
+        $this->assertCount( 2, FD_Test_WP::$requests );
+        $this->assertSame( 'https://agent.example/.well-known/ucp/2026-08-25/', FD_Test_WP::$requests[1]['url'] );
+        $this->assertSame( 0, FD_Test_WP::hook_count( 'http_api_curl' ) );
+    }
+
+    public function test_same_origin_308_with_absolute_location_is_followed(): void {
+        $this->redirect( 308, 'https://AGENT.example/p/#frag' );
+        $this->declare_version( '2026-01-23' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( '2026-01-23', $result['version'] );
+        $this->assertSame( 'https://agent.example/p/', FD_Test_WP::$requests[1]['url'] );
+    }
+
+    public function test_hop_with_mixed_case_host_is_requested_in_lowercase_on_the_pinned_ip(): void {
+        $this->redirect( 301, 'https://Agent.Example/P/' );
+        $this->declare_version( '2026-01-23' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://Agent.Example/p' );
+
+        $this->assertSame( '2026-01-23', $result['version'] );
+        $this->assertSame( 'https://agent.example/P/', FD_Test_WP::$requests[1]['url'] );
+        $this->assertSame( 0, FD_Test_WP::hook_count( 'http_api_curl' ) );
+    }
+
+    public function test_hop_shares_the_time_budget(): void {
+        $this->redirect( 302, '/p/' );
+        $this->declare_version( '2026-01-23' );
+
+        $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+        $args = FD_Test_WP::$requests[1]['args'];
+
+        $this->assertSame( FD_UCP_Agent_Profile_Fetcher::MAX_BYTES, $args['limit_response_size'] );
+        $this->assertSame( 0, $args['redirection'] );
+        $this->assertGreaterThan( 0, $args['timeout'] );
+        $this->assertLessThanOrEqual( FD_UCP_Agent_Profile_Fetcher::TIMEOUT, $args['timeout'] );
+    }
+
+    public function test_result_is_cached_under_the_original_url_only(): void {
+        $this->redirect( 301, '/p/' );
+        $this->declare_version( '2026-01-23' );
+
+        $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( array( md5( 'https://agent.example/p' ) ), array_keys( FD_Test_WP::$cache[ FD_UCP_Agent_Profile_Fetcher::CACHE_GROUP ] ) );
+    }
+
+    public function test_cross_origin_redirect_is_reported_with_its_location(): void {
+        $this->redirect( 301, 'https://other.example/p' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( array( 'failed' => true, 'reason' => 'redirected', 'location' => 'https://other.example/p' ), $result );
+        $this->assertCount( 1, FD_Test_WP::$requests );
+    }
+
+    public function test_redirect_to_another_port_is_reported(): void {
+        $this->redirect( 301, 'https://agent.example:8443/p' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( 'redirected', $result['reason'] );
+        $this->assertCount( 1, FD_Test_WP::$requests );
+    }
+
+    public function test_redirect_with_credentials_is_reported(): void {
+        $this->redirect( 301, 'https://user:pw@agent.example/p/' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( 'redirected', $result['reason'] );
+        $this->assertCount( 1, FD_Test_WP::$requests );
+    }
+
+    public function test_reported_location_never_carries_credentials(): void {
+        $this->redirect( 301, 'https://user:secret@other.example:8443/p?a=1#frag' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( 'https://other.example:8443/p?a=1', $result['location'] );
+    }
+
+    public function test_https_to_http_downgrade_is_reported(): void {
+        $this->redirect( 301, 'http://agent.example/p' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( array( 'failed' => true, 'reason' => 'redirected', 'location' => 'http://agent.example/p' ), $result );
+        $this->assertCount( 1, FD_Test_WP::$requests );
+    }
+
+    public function test_second_redirect_is_reported(): void {
+        $this->redirect( 301, '/p/' );
+        $this->redirect( 301, '/p//' );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( array( 'failed' => true, 'reason' => 'redirected', 'location' => 'https://agent.example/p//' ), $result );
+        $this->assertCount( 2, FD_Test_WP::$requests );
+    }
+
+    public function test_missing_or_empty_location_is_reported_as_null(): void {
+        foreach ( array( null, '', '   ' ) as $location ) {
+            FD_Test_WP::reset();
+            $this->redirect( 302, $location );
+
+            $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+            $this->assertSame( array( 'failed' => true, 'reason' => 'redirected', 'location' => null ), $result );
+        }
+    }
+
+    public function test_reported_location_is_truncated(): void {
+        $this->redirect( 301, 'https://other.example/' . str_repeat( 'a', 600 ) );
+
+        $result = $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' );
+
+        $this->assertSame( 512, strlen( $result['location'] ) );
+    }
+
+    public function test_body_cap_applies_after_the_redirect(): void {
+        $this->redirect( 301, '/p/' );
+        FD_Test_WP::$http_queue[] = array(
+            'body'     => str_repeat( ' ', FD_UCP_Agent_Profile_Fetcher::MAX_BYTES + 1 ) . '{}',
+            'response' => array( 'code' => 200 ),
+        );
+
+        $this->assertSame( array( 'failed' => true ), $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' ) );
+    }
+
+    public function test_non_200_after_the_redirect_fails(): void {
+        $this->redirect( 301, '/p/' );
+        FD_Test_WP::$http_queue[] = array( 'body' => '', 'response' => array( 'code' => 404 ) );
+
+        $this->assertSame( array( 'failed' => true ), $this->fetcher( array( '93.184.216.34' ) )->lookup( 'https://agent.example/p' ) );
+    }
 }

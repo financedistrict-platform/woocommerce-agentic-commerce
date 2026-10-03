@@ -10,6 +10,10 @@ final class FD_Test_Fixture_Profile_Fetcher extends FD_UCP_Agent_Profile_Fetcher
         $this->bodies = $bodies_by_url;
     }
 
+    public static function redirecting( ?string $location, int $code = 301 ): array {
+        return array( 'code' => $code, 'location' => $location );
+    }
+
     public static function declaring( ?string $version ): string {
         return json_encode( array( 'ucp' => null === $version ? array( 'capabilities' => array() ) : array( 'version' => $version ) ) );
     }
@@ -18,8 +22,12 @@ final class FD_Test_Fixture_Profile_Fetcher extends FD_UCP_Agent_Profile_Fetcher
         return array( '93.184.216.34' );
     }
 
-    protected function request( string $url, string $host, int $port, string $ip ): ?string {
+    protected function request( string $url, string $host, int $port, string $ip, int|float $timeout ): ?array {
         $this->requested[] = $url;
-        return $this->bodies[ $url ] ?? null;
+        $entry = $this->bodies[ $url ] ?? null;
+        if ( null === $entry ) {
+            return null;
+        }
+        return is_array( $entry ) ? $entry + array( 'body' => '', 'location' => null ) : array( 'code' => 200, 'body' => $entry, 'location' => null );
     }
 }
