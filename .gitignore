@@ -12,3 +12,6 @@ Thumbs.db
 
 # Built distribution artifacts
 *.zip
+
+# Local agent memory
+.claude/agent-memory/
