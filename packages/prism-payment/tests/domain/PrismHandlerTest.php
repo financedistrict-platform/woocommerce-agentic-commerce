@@ -171,7 +171,7 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( array(), $this->handler( null )->get_ucp_discovery_handlers_for_version( '2026-08-25' ) );
     }
 
-    public function test_client_sends_the_ucp_version_in_the_path_with_a_constant_user_agent_and_no_query(): void {
+    public function test_client_sends_the_ucp_version_in_the_path_and_no_query(): void {
         $client = new FD_Prism_Client( self::GW, 'key' );
         $client->fetch_ucp_handlers( '2026-08-25' );
         $client->prepare_ucp_payment( '10.00', 'EUR', 'https://store.test/c/1', 'Order', '2026-04-08' );
@@ -180,18 +180,11 @@ final class PrismHandlerTest extends TestCase {
         $requests = $GLOBALS['fd_test_requests'];
         $this->assertCount( 3, $requests );
         foreach ( $requests as $request ) {
-            $this->assertSame( 'fd-woocommerce-prism/0.3.6', $request['args']['headers']['User-Agent'] );
             $this->assertStringNotContainsString( 'ucp_version', $request['url'] );
         }
         $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-08-25/handlers', $requests[0]['url'] );
         $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-04-08/payment-requirements', $requests[1]['url'] );
         $this->assertSame( self::GW . '/api/v2/payment/settle', $requests[2]['url'] );
-    }
-
-    public function test_user_agent_matches_plugin_version(): void {
-        $source = file_get_contents( dirname( __DIR__, 2 ) . '/fd-woocommerce-prism.php' );
-        $this->assertSame( 1, preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", $source, $m ) );
-        $this->assertSame( 'fd-woocommerce-prism/' . $m[1], FD_Prism_Client::USER_AGENT );
     }
 
     public function test_handler_sends_the_pinned_version_on_prepare_and_the_discovery_version_on_discovery(): void {

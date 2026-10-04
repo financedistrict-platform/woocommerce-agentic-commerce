@@ -6,8 +6,6 @@ class FD_Prism_Client {
     private string $api_url;
     private string $api_key;
 
-    public const USER_AGENT = 'fd-woocommerce-prism/0.3.6';
-
     public function __construct( string $api_url, string $api_key ) {
         $this->api_url = rtrim( $api_url, '/' );
         $this->api_key = $api_key;
@@ -61,7 +59,6 @@ class FD_Prism_Client {
         return array(
             'X-API-Key'    => $this->api_key,
             'Content-Type' => 'application/json',
-            'User-Agent'   => self::USER_AGENT,
         );
     }
 
