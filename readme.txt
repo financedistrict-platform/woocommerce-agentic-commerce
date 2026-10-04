@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.3.6
+Stable tag: 0.3.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,8 +70,11 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Changelog ==
 
+= 0.3.7 =
+* Maintenance release: leaner Prism client. No behaviour change for stores.
+
 = 0.3.6 =
-* Prism calls use the UCP version in the path. User-Agent is fd-woocommerce-prism/0.3.6. Settle no longer sends a UCP version. Needs Prism with versioned routes.
+* Prism calls use the UCP version in the path. Settle no longer sends a UCP version. Needs Prism with versioned routes.
 
 = 0.3.5 =
 * Agent profile fetch: the 128 KiB size cap is now enforced (an oversized profile is rejected instead of being truncated and parsed), and the same-origin redirect hop reuses the already validated address instead of resolving DNS a second time.
@@ -83,7 +86,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 * An agent profile URL that redirects to another URL on the same origin (for example a trailing slash) is followed once. Any other redirect is rejected with `424 profile_redirected` in both modes, naming the Location, instead of silently serving the latest version.
 
 = 0.3.2 =
-* Prism payment: every Prism request now identifies itself as `fd-woocommerce-prism/<UCP version>` so Prism serves the matching handler contract, and the `ucp_version` query is no longer sent.
+* Prism payment: every Prism request now carries the UCP version so Prism serves the matching handler contract, and the `ucp_version` query is no longer sent.
 * The 2026-01-23 profile links `services/shopping/openapi.json` and lists only checkout, fulfillment and order.
 * The 2026-08-25 profile no longer declares buyer identity.
 * Strict mode errors use `profile_unreachable` (424) and `profile_malformed` (422).
