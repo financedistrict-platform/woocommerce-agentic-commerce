@@ -71,7 +71,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 == Changelog ==
 
 = 0.3.8 =
-* Prism order details now show the buyer's wallet as the payer (it showed the store's collector address). The empty "Prism Reference" row is removed: Prism's settle reply has no payment id; the transaction hash links the order to the payment.
+* Prism order details now show the buyer's wallet as the payer (it showed the store's collector address). Orders paid before 0.3.8 keep the old value. The empty "Prism Reference" row is removed: Prism's settle reply has no payment id; the transaction hash links the order to the payment.
 
 = 0.3.7 =
 * Maintenance release: leaner Prism client. No behaviour change for stores.
