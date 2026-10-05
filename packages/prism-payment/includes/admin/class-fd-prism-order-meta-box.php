@@ -99,7 +99,7 @@ class FD_Prism_Order_Meta_Box {
             echo '<dd><code>' . esc_html( $tx_hash ) . '</code></dd>';
         }
 
-        // Payer (agent fingerprint → we don't store payer address yet, but we can extract from the credential)
+        // Payer
         $payer = $order->get_meta( '_fd_prism_payer' );
         if ( $payer && $address_base ) {
             $short_payer = substr( $payer, 0, 6 ) . '...' . substr( $payer, -4 );
@@ -118,13 +118,6 @@ class FD_Prism_Order_Meta_Box {
             $decimal = number_format( (int) $amount / 1_000_000, 6, '.', '' );
             echo '<dt>' . esc_html__( 'Settlement Amount', 'fd-prism-for-woocommerce' ) . '</dt>';
             echo '<dd>' . esc_html( $decimal ) . ' ' . esc_html( $symbol ) . '</dd>';
-        }
-
-        // Prism Reference
-        $prism_ref = $order->get_meta( '_fd_prism_payment_id' );
-        if ( $prism_ref ) {
-            echo '<dt>' . esc_html__( 'Prism Reference', 'fd-prism-for-woocommerce' ) . '</dt>';
-            echo '<dd><code class="fd-prism-ref">' . esc_html( $prism_ref ) . '</code></dd>';
         }
 
         echo '</dl>';
