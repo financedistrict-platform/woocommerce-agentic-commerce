@@ -221,16 +221,16 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
 
         $payer_info = FD_Prism_Validator::extract_signed_summary( $authorization );
 
-        $prism_payment_id = $result['facilitatorTransactionId']
-            ?? $result['paymentId'] ?? $result['id'] ?? '';
+        $settled_payer = $result['payer'] ?? '';
 
         $order_meta = array(
-            '_fd_prism_tx_hash'    => $tx_ref,
-            '_fd_prism_network'    => $network,
-            '_fd_prism_payment_id' => $prism_payment_id,
+            '_fd_prism_tx_hash' => $tx_ref,
+            '_fd_prism_network' => $network,
+            '_fd_prism_payer'   => is_string( $settled_payer ) && '' !== $settled_payer
+                ? $settled_payer
+                : ( $payer_info['from'] ?? '' ),
         );
         if ( $payer_info ) {
-            $order_meta['_fd_prism_payer']  = $payer_info['to'] ?? '';
             $order_meta['_fd_prism_asset']  = $payer_info['asset'] ?? '';
             $order_meta['_fd_prism_amount'] = $payer_info['value'] ?? '';
         }

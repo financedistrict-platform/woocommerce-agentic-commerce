@@ -49,6 +49,7 @@ class FD_Prism_Validator {
                         ?? $accepted['asset'] ?? $payload['payload']['asset'] ?? '',
                     'value'   => (string) ( $auth['value'] ?? '0' ),
                     'to'      => $auth['to'] ?? '',
+                    'from'    => $auth['from'] ?? '',
                 );
             }
         }
@@ -60,6 +61,7 @@ class FD_Prism_Validator {
                 'asset'   => $decoded['asset'] ?? '',
                 'value'   => (string) $decoded['value'],
                 'to'      => $decoded['to'] ?? '',
+                'from'    => $decoded['from'] ?? '',
             );
         }
 
