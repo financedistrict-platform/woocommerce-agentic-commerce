@@ -374,7 +374,7 @@ final class PrismHandlerTest extends TestCase {
         $this->assertArrayNotHasKey( '_fd_prism_payment_id', $result['order_meta'] );
     }
 
-    public function test_settled_order_meta_falls_back_to_the_signed_payer(): void {
+    public function test_settled_order_meta_falls_back_to_the_signed_payer_when_prism_sends_none(): void {
         $payer         = '0xb5004598bBf235A30494339500601D0cD8E5367A';
         $pay_to        = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
         $authorization = array(
@@ -390,7 +390,7 @@ final class PrismHandlerTest extends TestCase {
         ) ) ) ) ) ) ) );
         $GLOBALS['fd_test_http_response'] = array(
             'response' => array( 'code' => 200 ),
-            'body'     => json_encode( array( 'success' => true, 'transaction' => '0xabc' ) ),
+            'body'     => json_encode( array( 'success' => true, 'payer' => '', 'transaction' => '0xabc' ) ),
         );
 
         $result = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => $authorization, 'checkout_meta' => $meta ) );

@@ -61,6 +61,7 @@ class FD_Prism_Validator {
                 'asset'   => $decoded['asset'] ?? '',
                 'value'   => (string) $decoded['value'],
                 'to'      => $decoded['to'] ?? '',
+                'from'    => $decoded['from'] ?? '',
             );
         }
 
