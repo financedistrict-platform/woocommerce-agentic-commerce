@@ -15,8 +15,8 @@ class FD_Prism_Client {
         return $this->get( '/api/v2/merchant/ucp/' . rawurlencode( $ucp_version ) . '/handlers' );
     }
 
-    public function prepare_ucp_payment( string $amount, string $currency, string $resource_url, string $description, string $ucp_version ): ?array {
-        return $this->post( '/api/v2/merchant/ucp/' . rawurlencode( $ucp_version ) . '/payment-requirements', array(
+    public function prepare_payment_requirements( string $amount, string $currency, string $resource_url, string $description ): ?array {
+        return $this->post( '/api/v2/merchant/payment-requirements', array(
             'amount'   => $amount,
             'currency' => $currency,
             'resource' => array(
