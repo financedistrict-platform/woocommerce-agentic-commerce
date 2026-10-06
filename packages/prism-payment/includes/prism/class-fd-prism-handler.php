@@ -152,7 +152,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         $declaration = $this->get_ucp_discovery_handlers_for_version( $version )[ self::HANDLER_ID ][0] ?? null;
         if ( ! is_array( $declaration ) ) {
             error_log( 'fd-prism: no Prism handler declaration for UCP version ' . $version . ', checkout entry omitted' );
-            return $existing;
+            return null;
         }
 
         $amount_major = FD_Prism_Client::minor_to_major_string( $total );
@@ -165,8 +165,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             "$order_label at $store_name"
         );
 
-        if ( ! $result ) {
-            return $existing;
+        if ( ! self::is_payment_requirements( $result ) ) {
+            error_log( 'fd-prism: payment requirements response has no x402Version or accepts, checkout entry omitted' );
+            return null;
         }
 
         return array(
@@ -268,6 +269,14 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         return $prism_data['ucp'];
     }
 
+
+    private static function is_payment_requirements( $requirements ): bool {
+        return is_array( $requirements )
+            && isset( $requirements['x402Version'] )
+            && is_array( $requirements['accepts'] ?? null )
+            && array() !== $requirements['accepts']
+            && array_is_list( $requirements['accepts'] );
+    }
 
     private function decode_credential( $credential ): ?array {
         if ( is_string( $credential ) ) {

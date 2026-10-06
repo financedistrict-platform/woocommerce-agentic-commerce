@@ -210,7 +210,7 @@ final class PrismHandlerTest extends TestCase {
     public function test_prepare_reuses_the_quote_for_the_same_version_and_reprepares_for_another(): void {
         $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-04-08' ) ] = self::contract();
         $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-08-25' ) ] = self::contract();
-        $GLOBALS['fd_test_http_response'] = array( 'body' => '{"accepts":[{"scheme":"exact"}]}', 'response' => array( 'code' => 200 ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
         $handler = new FD_Prism_Handler( self::GW, 'key' );
         $input   = array(
             'total'             => 1000,
@@ -304,6 +304,31 @@ final class PrismHandlerTest extends TestCase {
         foreach ( $GLOBALS['fd_test_requests'] as $request ) {
             $this->assertStringEndsNotWith( '/payment-requirements', $request['url'] );
         }
+    }
+
+    public function test_prepare_omits_the_entry_when_the_response_is_not_payment_requirements(): void {
+        foreach ( array( '{"x402Version":2,"resource":{}}', '{"x402Version":2,"accepts":[]}', '{"accepts":[{"scheme":"exact"}]}' ) as $body ) {
+            $handler = $this->handler( self::contract() );
+            FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+            $GLOBALS['fd_test_http_response'] = array( 'body' => $body, 'response' => array( 'code' => 200 ) );
+
+            $this->assertNull( $handler->prepare_checkout_payment( self::prepare_input() ), $body );
+        }
+    }
+
+    public function test_failed_reprepare_drops_the_stale_quote(): void {
+        $handler = $this->handler( self::contract() );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+        $input = self::prepare_input();
+        $stale = $handler->prepare_checkout_payment( $input );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => '{}', 'response' => array( 'code' => 200 ) );
+
+        $input['total']         = $input['total'] + 1000;
+        $input['checkout_meta'] = array( 'xyz.fd.prism_payment' => $stale );
+
+        $this->assertNotNull( $stale );
+        $this->assertNull( $handler->prepare_checkout_payment( $input ) );
     }
 
     public function test_third_party_handler_without_versioned_interface_is_still_listed(): void {
