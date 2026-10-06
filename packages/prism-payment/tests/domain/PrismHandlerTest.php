@@ -182,7 +182,7 @@ final class PrismHandlerTest extends TestCase {
         foreach ( $requests as $request ) {
             $this->assertStringNotContainsString( 'ucp_version', $request['url'] );
         }
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-08-25/handlers', $requests[0]['url'] );
+        $this->assertSame( self::GW . '/ucp/2026-08-25/handlers', $requests[0]['url'] );
         $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $requests[1]['url'] );
         $this->assertSame( self::GW . '/api/v2/payment/settle', $requests[2]['url'] );
     }
@@ -204,7 +204,7 @@ final class PrismHandlerTest extends TestCase {
 
         $requests = $GLOBALS['fd_test_requests'];
         $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $requests[0]['url'] );
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-01-23/handlers', $requests[1]['url'] );
+        $this->assertSame( self::GW . '/ucp/2026-01-23/handlers', $requests[1]['url'] );
     }
 
     public function test_prepare_reuses_the_quote_for_the_same_version_and_reprepares_for_another(): void {

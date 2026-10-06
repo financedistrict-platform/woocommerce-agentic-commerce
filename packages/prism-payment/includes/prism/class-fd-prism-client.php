@@ -12,7 +12,7 @@ class FD_Prism_Client {
     }
 
     public function fetch_ucp_handlers( string $ucp_version ): ?array {
-        return $this->get( '/api/v2/merchant/ucp/' . rawurlencode( $ucp_version ) . '/handlers' );
+        return $this->get( '/ucp/' . rawurlencode( $ucp_version ) . '/handlers' );
     }
 
     public function prepare_payment_requirements( string $amount, string $currency, string $resource_url, string $description ): ?array {
