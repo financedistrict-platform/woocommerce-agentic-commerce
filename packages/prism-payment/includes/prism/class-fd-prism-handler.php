@@ -149,23 +149,37 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             return $existing;
         }
 
+        $declaration = $this->get_ucp_discovery_handlers_for_version( $version )[ self::HANDLER_ID ][0] ?? null;
+        if ( ! is_array( $declaration ) ) {
+            error_log( 'fd-prism: no Prism handler declaration for UCP version ' . $version . ', checkout entry omitted' );
+            return null;
+        }
+
         $amount_major = FD_Prism_Client::minor_to_major_string( $total );
         $order_label  = $input['order_label'] ?? 'Checkout';
 
-        $result = $this->client->prepare_ucp_payment(
+        $result = $this->client->prepare_payment_requirements(
             $amount_major,
             $currency,
             $resource_url,
-            "$order_label at $store_name",
-            $version
+            "$order_label at $store_name"
         );
 
-        if ( ! $result ) {
-            return $existing;
+        if ( ! self::is_payment_requirements( $result ) ) {
+            error_log( 'fd-prism: payment requirements response has no x402Version or accepts, checkout entry omitted' );
+            return null;
         }
 
         return array(
-            'ucp'                  => $result,
+            'ucp'                  => array(
+                self::HANDLER_ID => array(
+                    array(
+                        'id'      => $declaration['id'],
+                        'version' => $declaration['version'],
+                        'config'  => $result,
+                    ),
+                ),
+            ),
             'prepared_amount'      => $total,
             'prepared_resource_url' => $resource_url,
             'prepared_version'     => $version,
@@ -255,6 +269,14 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         return $prism_data['ucp'];
     }
 
+
+    private static function is_payment_requirements( $requirements ): bool {
+        return is_array( $requirements )
+            && isset( $requirements['x402Version'] )
+            && is_array( $requirements['accepts'] ?? null )
+            && array() !== $requirements['accepts']
+            && array_is_list( $requirements['accepts'] );
+    }
 
     private function decode_credential( $credential ): ?array {
         if ( is_string( $credential ) ) {

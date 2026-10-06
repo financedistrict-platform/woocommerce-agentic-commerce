@@ -171,10 +171,10 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( array(), $this->handler( null )->get_ucp_discovery_handlers_for_version( '2026-08-25' ) );
     }
 
-    public function test_client_sends_the_ucp_version_in_the_path_and_no_query(): void {
+    public function test_client_sends_the_ucp_version_only_on_discovery_and_no_query(): void {
         $client = new FD_Prism_Client( self::GW, 'key' );
         $client->fetch_ucp_handlers( '2026-08-25' );
-        $client->prepare_ucp_payment( '10.00', 'EUR', 'https://store.test/c/1', 'Order', '2026-04-08' );
+        $client->prepare_payment_requirements( '10.00', 'EUR', 'https://store.test/c/1', 'Order' );
         $client->settle( array( 'x402Version' => 2, 'paymentPayload' => array() ) );
 
         $requests = $GLOBALS['fd_test_requests'];
@@ -183,11 +183,12 @@ final class PrismHandlerTest extends TestCase {
             $this->assertStringNotContainsString( 'ucp_version', $request['url'] );
         }
         $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-08-25/handlers', $requests[0]['url'] );
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-04-08/payment-requirements', $requests[1]['url'] );
+        $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $requests[1]['url'] );
         $this->assertSame( self::GW . '/api/v2/payment/settle', $requests[2]['url'] );
     }
 
-    public function test_handler_sends_the_pinned_version_on_prepare_and_the_discovery_version_on_discovery(): void {
+    public function test_handler_reads_the_pinned_version_declaration_on_prepare_and_the_discovery_version_on_discovery(): void {
+        $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-04-08' ) ] = self::contract();
         FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-04-08' ) );
         $GLOBALS['fd_test_http_response'] = array( 'body' => '{}', 'response' => array( 'code' => 200 ) );
         $handler = new FD_Prism_Handler( self::GW, 'key' );
@@ -202,12 +203,14 @@ final class PrismHandlerTest extends TestCase {
         $handler->get_ucp_discovery_handlers_for_version( '2026-01-23' );
 
         $requests = $GLOBALS['fd_test_requests'];
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-04-08/payment-requirements', $requests[0]['url'] );
+        $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $requests[0]['url'] );
         $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-01-23/handlers', $requests[1]['url'] );
     }
 
     public function test_prepare_reuses_the_quote_for_the_same_version_and_reprepares_for_another(): void {
-        $GLOBALS['fd_test_http_response'] = array( 'body' => '{"accepts":[{"scheme":"exact"}]}', 'response' => array( 'code' => 200 ) );
+        $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-04-08' ) ] = self::contract();
+        $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-08-25' ) ] = self::contract();
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
         $handler = new FD_Prism_Handler( self::GW, 'key' );
         $input   = array(
             'total'             => 1000,
@@ -230,7 +233,102 @@ final class PrismHandlerTest extends TestCase {
         $second = $handler->prepare_checkout_payment( $input );
         $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
         $this->assertSame( '2026-08-25', $second['prepared_version'] );
-        $this->assertSame( self::GW . '/api/v2/merchant/ucp/2026-08-25/payment-requirements', $GLOBALS['fd_test_requests'][1]['url'] );
+        $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $GLOBALS['fd_test_requests'][1]['url'] );
+    }
+
+    private const X402_BODY = '{"x402Version":2,"resource":{"url":"https://store.test/checkout-sessions/c1"},"accepts":[{"scheme":"exact"}]}';
+
+    private static function prepare_input(): array {
+        return array(
+            'total'             => 1000,
+            'currency'          => 'EUR',
+            'checkout_id'       => 'c1',
+            'checkout_base_url' => 'https://store.test',
+            'store_name'        => 'Store',
+        );
+    }
+
+    public function test_prepare_posts_to_the_protocol_agnostic_path_without_a_ucp_version(): void {
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-08-25' ) ] = self::contract();
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+
+        ( new FD_Prism_Handler( self::GW, 'key' ) )->prepare_checkout_payment( self::prepare_input() );
+
+        $requests = $GLOBALS['fd_test_requests'];
+        $this->assertCount( 1, $requests );
+        $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $requests[0]['url'] );
+        $this->assertStringNotContainsString( '2026-08-25', $requests[0]['url'] );
+        $this->assertStringNotContainsString( '/ucp/', $requests[0]['url'] );
+        $body = json_decode( $requests[0]['args']['body'], true );
+        $this->assertArrayHasKey( 'amount', $body );
+        $this->assertArrayHasKey( 'currency', $body );
+        $this->assertArrayHasKey( 'resource', $body );
+    }
+
+    public function test_composed_checkout_entry_matches_the_discovery_entry_for_the_same_version(): void {
+        $handler   = $this->handler( self::contract() );
+        $discovery = $handler->get_ucp_discovery_handlers_for_version( '2026-08-25' )['xyz.fd.prism_payment'][0];
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+
+        $meta  = $handler->prepare_checkout_payment( self::prepare_input() );
+        $entry = $handler->get_ucp_checkout_handlers( array( 'xyz.fd.prism_payment' => $meta ) )['xyz.fd.prism_payment'][0];
+
+        $this->assertSame( $discovery['id'], $entry['id'] );
+        $this->assertSame( $discovery['version'], $entry['version'] );
+        $this->assertSame( json_decode( self::X402_BODY, true ), $entry['config'] );
+        $this->assertArrayNotHasKey( 'xyz.fd.prism_payment', $entry['config'] );
+        $this->assertCount( 1, ( new ReflectionProperty( FD_Prism_Handler::class, 'client' ) )->getValue( $handler )->versions );
+    }
+
+    public function test_composed_checkout_entry_uses_the_canonical_id_for_a_legacy_declaration(): void {
+        $handler = $this->handler( self::legacy() );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+
+        $meta  = $handler->prepare_checkout_payment( self::prepare_input() );
+        $entry = $handler->get_ucp_checkout_handlers( array( 'xyz.fd.prism_payment' => $meta ) )['xyz.fd.prism_payment'][0];
+
+        $this->assertSame( 'xyz.fd.prism_payment', $entry['id'] );
+        $this->assertSame( '2026-01-15', $entry['version'] );
+        $this->assertSame( json_decode( self::X402_BODY, true ), $entry['config'] );
+    }
+
+    public function test_prepare_omits_the_entry_when_no_declaration_exists(): void {
+        $handler = $this->handler( null );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+
+        $this->assertNull( $handler->prepare_checkout_payment( self::prepare_input() ) );
+        $this->assertSame( array(), $handler->get_ucp_checkout_handlers( array( 'xyz.fd.prism_payment' => null ) ) );
+        foreach ( $GLOBALS['fd_test_requests'] as $request ) {
+            $this->assertStringEndsNotWith( '/payment-requirements', $request['url'] );
+        }
+    }
+
+    public function test_prepare_omits_the_entry_when_the_response_is_not_payment_requirements(): void {
+        foreach ( array( '{"x402Version":2,"resource":{}}', '{"x402Version":2,"accepts":[]}', '{"accepts":[{"scheme":"exact"}]}' ) as $body ) {
+            $handler = $this->handler( self::contract() );
+            FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+            $GLOBALS['fd_test_http_response'] = array( 'body' => $body, 'response' => array( 'code' => 200 ) );
+
+            $this->assertNull( $handler->prepare_checkout_payment( self::prepare_input() ), $body );
+        }
+    }
+
+    public function test_failed_reprepare_drops_the_stale_quote(): void {
+        $handler = $this->handler( self::contract() );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+        $input = self::prepare_input();
+        $stale = $handler->prepare_checkout_payment( $input );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => '{}', 'response' => array( 'code' => 200 ) );
+
+        $input['total']         = $input['total'] + 1000;
+        $input['checkout_meta'] = array( 'xyz.fd.prism_payment' => $stale );
+
+        $this->assertNotNull( $stale );
+        $this->assertNull( $handler->prepare_checkout_payment( $input ) );
     }
 
     public function test_third_party_handler_without_versioned_interface_is_still_listed(): void {
