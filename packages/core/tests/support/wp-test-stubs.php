@@ -12,11 +12,13 @@ final class FD_Test_WP {
     public static $http_response    = null;
     public static array $http_queue = array();
     public static bool $live_http   = false;
+    public static array $uuids      = array();
     public static array $routes     = array();
     public static string $environment = 'production';
 
     public static function reset(): void {
         self::$routes        = array();
+        self::$uuids         = array();
         self::$options       = array();
         self::$transients    = array();
         self::$cache         = array();
@@ -544,6 +546,9 @@ function get_woocommerce_currency(): string {
 }
 
 function wp_generate_uuid4(): string {
+    if ( ! empty( FD_Test_WP::$uuids ) ) {
+        return array_shift( FD_Test_WP::$uuids );
+    }
     return '9b2e7c1a-4d3f-4e8a-b6c5-1f0a2d3e4b5c';
 }
 
@@ -960,7 +965,11 @@ final class FD_Test_Wpdb {
     }
 
     public function get_row( string $query, $output = null ) {
+        $platform = preg_match( "/platform_id = '([^']*)'/", $query, $m ) ? $m[1] : null;
         foreach ( $this->rows( $query ) as $row ) {
+            if ( null !== $platform && ( $row['platform_id'] ?? null ) !== $platform ) {
+                continue;
+            }
             foreach ( array( 'id', 'idempotency_key' ) as $column ) {
                 if ( ! empty( $row[ $column ] ) && false !== strpos( $query, "'" . $row[ $column ] . "'" ) ) {
                     return $row;

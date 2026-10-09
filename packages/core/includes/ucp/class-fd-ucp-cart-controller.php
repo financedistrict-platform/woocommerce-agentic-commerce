@@ -59,22 +59,21 @@ class FD_UCP_Cart_Controller {
 		}
 		$cart_subtotal = FD_UCP_Checkout_Pricing::subtotal_of( $formatted_items );
 
-		$token = FD_UCP_Session_Token::issue();
-		$now   = current_time( 'mysql', true );
-		$this->insert_cart( array(
-			'id'                 => $cart_id,
-			'line_items'         => wp_json_encode( $formatted_items ),
-			'session_token_hash' => FD_UCP_Session_Token::hash( $token ),
-			'ucp_version'        => FD_UCP_Request_Context::current()->session_pin(),
-			'created_at'         => $now,
-			'updated_at'         => $now,
-			'expires_at'         => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
+		$now    = current_time( 'mysql', true );
+		$stored = $this->insert_cart( array(
+			'id'          => $cart_id,
+			'line_items'  => wp_json_encode( $formatted_items ),
+			'platform_id' => FD_UCP_Request_Context::current()->platform_id(),
+			'ucp_version' => FD_UCP_Request_Context::current()->session_pin(),
+			'created_at'  => $now,
+			'updated_at'  => $now,
+			'expires_at'  => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
 		) );
+		if ( ! $stored ) {
+			return FD_UCP_Error::response( 'storage_unavailable', 'The cart could not be stored', 503 );
+		}
 
-		return FD_UCP_Session_Token::hand_over(
-			new WP_REST_Response( $this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ), 201 ),
-			$token
-		);
+		return new WP_REST_Response( $this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ), 201 );
 	}
 
 	// =========================================================================
@@ -82,19 +81,9 @@ class FD_UCP_Cart_Controller {
 	// =========================================================================
 
 	public function get_cart( WP_REST_Request $request ): WP_REST_Response {
-		$cart = $this->load_cart( $request->get_param( 'id' ) );
-		if ( ! $cart ) {
-			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
-		}
-
-		$ownership = $this->verify_cart_ownership( $request, $cart );
-		if ( is_wp_error( $ownership ) ) {
-			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
-		}
-
-		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
+		$cart = $this->owned_cart( $request );
+		if ( $cart instanceof WP_REST_Response ) {
+			return $cart;
 		}
 
 		$line_items = $this->current_line_items( $cart );
@@ -113,19 +102,9 @@ class FD_UCP_Cart_Controller {
 	// =========================================================================
 
 	public function update_cart( WP_REST_Request $request ): WP_REST_Response {
-		$cart = $this->load_cart( $request->get_param( 'id' ) );
-		if ( ! $cart ) {
-			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
-		}
-
-		$ownership = $this->verify_cart_ownership( $request, $cart );
-		if ( is_wp_error( $ownership ) ) {
-			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
-		}
-
-		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
+		$cart = $this->owned_cart( $request );
+		if ( $cart instanceof WP_REST_Response ) {
+			return $cart;
 		}
 
 		$body       = $request->get_json_params();
@@ -158,19 +137,9 @@ class FD_UCP_Cart_Controller {
 	// =========================================================================
 
 	public function checkout( WP_REST_Request $request ): WP_REST_Response {
-		$cart = $this->load_cart( $request->get_param( 'id' ) );
-		if ( ! $cart ) {
-			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
-		}
-
-		$ownership = $this->verify_cart_ownership( $request, $cart );
-		if ( is_wp_error( $ownership ) ) {
-			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
-		}
-
-		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
+		$cart = $this->owned_cart( $request );
+		if ( $cart instanceof WP_REST_Response ) {
+			return $cart;
 		}
 
 		$line_items = $this->current_line_items( $cart );
@@ -190,7 +159,7 @@ class FD_UCP_Cart_Controller {
 
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- custom table
-		$wpdb->insert( "{$wpdb->prefix}fd_ucp_checkout_sessions", array(
+		$stored = $wpdb->insert( "{$wpdb->prefix}fd_ucp_checkout_sessions", array(
 			'id'                => $session_id,
 			'status'            => 'incomplete',
 			'currency'          => $currency,
@@ -199,12 +168,15 @@ class FD_UCP_Cart_Controller {
 			'buyer'             => null,
 			'fulfillment'       => null,
 			'payment_meta'      => null,
-			'session_token_hash' => $cart['session_token_hash'],
+			'platform_id'       => $cart['platform_id'],
 			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
 			'created_at'        => $now,
 			'updated_at'        => $now,
 			'expires_at'        => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
 		) );
+		if ( false === $stored ) {
+			return FD_UCP_Error::response( 'storage_unavailable', 'The checkout session could not be stored', 503 );
+		}
 
 		$this->delete_cart_row( $cart['id'] );
 
@@ -225,19 +197,9 @@ class FD_UCP_Cart_Controller {
 	// =========================================================================
 
 	public function delete_cart( WP_REST_Request $request ): WP_REST_Response {
-		$cart = $this->load_cart( $request->get_param( 'id' ) );
-		if ( ! $cart ) {
-			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
-		}
-
-		$ownership = $this->verify_cart_ownership( $request, $cart );
-		if ( is_wp_error( $ownership ) ) {
-			return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
-		}
-
-		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
+		$cart = $this->owned_cart( $request );
+		if ( $cart instanceof WP_REST_Response ) {
+			return $cart;
 		}
 
 		$this->delete_cart_row( $cart['id'] );
@@ -263,21 +225,24 @@ class FD_UCP_Cart_Controller {
 		return FD_UCP_Checkout_Pricing::catalog_line_items( json_decode( $cart['line_items'] ?? '[]', true ) ?: array(), true );
 	}
 
-	private function verify_cart_ownership( WP_REST_Request $request, array $cart ): true|WP_Error {
-		if ( ! FD_UCP_Session_Token::owns_row( $request, $cart ) ) {
-			return new WP_Error( 'cart_ownership', 'A valid UCP-Session-Token is required for this cart' );
+	private function owned_cart( WP_REST_Request $request ): array|WP_REST_Response {
+		$cart = $this->load_cart( (string) $request->get_param( 'id' ) );
+		if ( ! $cart || ! FD_UCP_Ownership::owns_row( $cart ) ) {
+			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
 		}
-		return true;
+
+		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $cart['ucp_version'] ?? null );
+		return null !== $pin ? $pin : $cart;
 	}
 
 	// =========================================================================
 	// Database
 	// =========================================================================
 
-	private function insert_cart( array $data ): void {
+	private function insert_cart( array $data ): bool {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- custom table
-		$wpdb->insert( "{$wpdb->prefix}fd_ucp_carts", $data );
+		return false !== $wpdb->insert( "{$wpdb->prefix}fd_ucp_carts", $data );
 	}
 
 	private function load_cart( string $id ): ?array {

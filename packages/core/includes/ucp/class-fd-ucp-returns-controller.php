@@ -123,7 +123,7 @@ class FD_UCP_Returns_Controller {
 			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 
-		if ( ! FD_UCP_Session_Token::owns_order( $request, $order ) ) {
+		if ( ! FD_UCP_Ownership::owns_order( $order ) ) {
 			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 
