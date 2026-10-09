@@ -275,7 +275,19 @@ final class FD_Test_Product_Store {
 }
 
 final class FD_Test_Product {
-    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true, private bool $purchasable = true ) {
+    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true, private bool $purchasable = true, private ?int $stock = null, private bool $backorders = false, private ?int $stock_owner = null ) {
+    }
+
+    public function get_stock_managed_by_id(): int {
+        return $this->stock_owner ?? $this->id;
+    }
+
+    public function is_in_stock(): bool {
+        return null === $this->stock || $this->backorders || $this->stock > 0;
+    }
+
+    public function has_enough_stock( $quantity ): bool {
+        return null === $this->stock || $this->backorders || $this->stock >= $quantity;
     }
 
     public function needs_shipping(): bool {

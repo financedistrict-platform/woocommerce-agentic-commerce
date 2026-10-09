@@ -1227,6 +1227,159 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertEqualsWithDelta( time(), $stamp, 5 );
     }
 
+    public static function unpayable_quantities(): array {
+        return array(
+            'huge int'          => array( 1000000000 ),
+            'int max'           => array( PHP_INT_MAX ),
+            'int max as string' => array( '9223372036854775807' ),
+            'float overflow'    => array( 1e30 ),
+            'one above the cap' => array( 1000 ),
+            'zero'              => array( 0 ),
+            'negative'          => array( -5 ),
+            'text'              => array( 'abc' ),
+            'fraction'          => array( 1.5 ),
+            'boolean'           => array( true ),
+        );
+    }
+
+    #[DataProvider( 'unpayable_quantities' )]
+    public function test_create_rejects_a_quantity_outside_the_allowed_range( mixed $quantity ): void {
+        FD_Test_Product_Store::$products[400] = new FD_Test_Product( 400, '18.00', 'Backorder', true, true, 0, true );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '400' ), 'quantity' => $quantity ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_quantity', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+        $this->assertSame( array(), $this->handler->prepared );
+    }
+
+    #[DataProvider( 'unpayable_quantities' )]
+    public function test_update_rejects_a_quantity_outside_the_allowed_range( mixed $quantity ): void {
+        $response = $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => $quantity ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_quantity', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->handler->prepared );
+    }
+
+    #[DataProvider( 'unpayable_quantities' )]
+    public function test_cart_line_items_reject_a_quantity_outside_the_allowed_range( mixed $quantity ): void {
+        $priced = FD_UCP_Checkout_Pricing::catalog_line_items( array( array( 'item' => array( 'id' => '101' ), 'quantity' => $quantity ) ), false );
+
+        $this->assertInstanceOf( WP_Error::class, $priced );
+        $this->assertSame( 'invalid_quantity', $priced->get_error_code() );
+    }
+
+    public function test_create_accepts_the_largest_allowed_quantity(): void {
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => '999' ) ) ) );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 1798200, $this->stored_totals( wp_generate_uuid4() )['subtotal'] );
+    }
+
+    public function test_create_rejects_a_total_beyond_the_payable_range(): void {
+        FD_Test_Product_Store::$products[401] = new FD_Test_Product( 401, '5000000.00', 'Pricey', false );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '401' ), 'quantity' => 999 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_total', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_create_rejects_a_catalog_price_beyond_the_payable_range(): void {
+        FD_Test_Product_Store::$products[402] = new FD_Test_Product( 402, '1.0E+30', 'Broken price', false );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '402' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_total', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_create_rejects_a_quantity_the_stock_cannot_cover(): void {
+        FD_Test_Product_Store::$products[403] = new FD_Test_Product( 403, '18.00', 'Limited', true, true, 2 );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '403' ), 'quantity' => 3 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'out_of_stock', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_create_rejects_a_product_that_is_out_of_stock(): void {
+        FD_Test_Product_Store::$products[403] = new FD_Test_Product( 403, '18.00', 'Sold out', true, true, 0 );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '403' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'out_of_stock', $response->get_data()['messages'][0]['code'] );
+    }
+
+    public function test_create_counts_a_product_repeated_across_lines_against_its_stock(): void {
+        FD_Test_Product_Store::$products[403] = new FD_Test_Product( 403, '18.00', 'Limited', true, true, 3 );
+
+        $response = $this->create( array( 'line_items' => array(
+            array( 'item' => array( 'id' => '403' ), 'quantity' => 2 ),
+            array( 'item' => array( 'id' => '403' ), 'quantity' => 2 ),
+        ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'out_of_stock', $response->get_data()['messages'][0]['code'] );
+    }
+
+    public function test_create_accepts_a_backordered_quantity_within_the_cap(): void {
+        FD_Test_Product_Store::$products[404] = new FD_Test_Product( 404, '18.00', 'Backorder', true, true, 0, true );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '404' ), 'quantity' => 5 ) ) ) );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+    }
+
+    public function test_create_counts_variations_that_share_one_stock_pool(): void {
+        FD_Test_Product_Store::$products[405] = new FD_Test_Product( 405, '18.00', 'Size S', true, true, 3, false, 900 );
+        FD_Test_Product_Store::$products[406] = new FD_Test_Product( 406, '18.00', 'Size M', true, true, 3, false, 900 );
+
+        $response = $this->create( array( 'line_items' => array(
+            array( 'item' => array( 'id' => '405' ), 'quantity' => 2 ),
+            array( 'item' => array( 'id' => '406' ), 'quantity' => 2 ),
+        ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'out_of_stock', $response->get_data()['messages'][0]['code'] );
+    }
+
+    public function test_order_total_is_an_amount_only_inside_the_payable_range(): void {
+        $order        = new WC_Order();
+        $order->total = '46.95';
+        $this->assertSame( 4695, FD_UCP_Checkout_Pricing::order_total_minor( $order ) );
+
+        $order->total = '2000000000.00';
+        $this->assertNull( FD_UCP_Checkout_Pricing::order_total_minor( $order ) );
+
+        $order->total = '-5.00';
+        $this->assertNull( FD_UCP_Checkout_Pricing::order_total_minor( $order ) );
+    }
+
+    public function test_complete_refuses_to_settle_when_the_order_total_is_beyond_the_payable_range(): void {
+        FD_Test_WC::$tax_rate = 1000000000.0;
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_priced_totals_reject_amounts_beyond_the_payable_range(): void {
+        $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( PHP_INT_MAX, 0 ) );
+        $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( 100, PHP_INT_MAX ) );
+        $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( 100, 100, PHP_INT_MAX ) );
+    }
+
     private static function one_item(): array {
         return array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) );
     }
