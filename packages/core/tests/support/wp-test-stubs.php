@@ -300,6 +300,8 @@ final class FD_Test_Shipping_Rate {
 final class FD_Test_WC {
     public static ?FD_Test_WC $instance = null;
     public static array $rates          = array();
+    public static float $tax_rate       = 0.0;
+    public static float $included_rate  = 0.0;
     public $session;
     public $customer;
 
@@ -387,8 +389,14 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
 }
 
 class WC_Order {
-    public array $meta  = array();
-    public array $calls = array();
+    public array $meta   = array();
+    public array $calls  = array();
+    public array $items  = array();
+    public string $total = '0.00';
+    public string $status = 'pending';
+    public float $subtotal = 0.0;
+    public float $shipping = 0.0;
+    public float $tax      = 0.0;
 
     public function __construct() {
         $this->meta = array(
@@ -410,7 +418,7 @@ class WC_Order {
     }
 
     public function get_status(): string {
-        return 'pending';
+        return $this->status;
     }
 
     public function get_meta( string $key ) {
@@ -421,6 +429,67 @@ class WC_Order {
         $this->meta[ $key ] = $value;
     }
 
+    public function add_product( $product, int $quantity = 1 ): int {
+        $this->items[] = array( 'line_item', (float) $product->get_price() * $quantity );
+        return count( $this->items );
+    }
+
+    public function add_item( $item ): void {
+        $this->items[] = array( $item->type, (float) $item->total );
+    }
+
+    public function remove_order_items( ?string $type = null ): void {
+        $this->items = array_values( array_filter( $this->items, static fn( array $i ): bool => null !== $type && $i[0] !== $type ) );
+    }
+
+    public function calculate_totals( bool $and_taxes = true ): float {
+        $lines          = 0.0;
+        $this->shipping = 0.0;
+        foreach ( $this->items as $item ) {
+            if ( 'shipping' === $item[0] ) {
+                $this->shipping += $item[1];
+            } else {
+                $lines += $item[1];
+            }
+        }
+        $this->subtotal = round( $lines / ( 1 + FD_Test_WC::$included_rate ), 2 );
+        $this->tax      = round( ( $this->subtotal + $this->shipping ) * FD_Test_WC::$tax_rate, 2 );
+        $this->total    = number_format( $this->subtotal + $this->shipping + $this->tax, 2, '.', '' );
+        return (float) $this->total;
+    }
+
+    public function get_total(): string {
+        return $this->total;
+    }
+
+    public function get_subtotal(): float {
+        return $this->subtotal;
+    }
+
+    public function get_shipping_total(): string {
+        return number_format( $this->shipping, 2, '.', '' );
+    }
+
+    public function get_total_tax(): string {
+        return number_format( $this->tax, 2, '.', '' );
+    }
+
+    public function needs_payment(): bool {
+        return in_array( $this->status, array( 'pending', 'failed' ), true );
+    }
+
+    public function update_status( string $status, string $note = '' ): bool {
+        $this->calls[] = 'update_status';
+        $this->status  = $status;
+        return true;
+    }
+
+    public function payment_complete( string $transaction_id = '' ): bool {
+        $this->calls[] = 'payment_complete';
+        $this->status  = 'processing';
+        return true;
+    }
+
     public function __call( string $name, array $args ) {
         $this->calls[] = $name;
         return null;
@@ -428,12 +497,26 @@ class WC_Order {
 }
 
 class WC_Order_Item_Product {
+    public string $type = 'line_item';
+    public float $total = 0.0;
+
+    public function set_total( $total ): void {
+        $this->total = (float) $total;
+    }
+
     public function __call( string $name, array $args ) {
         return null;
     }
 }
 
 class WC_Order_Item_Shipping {
+    public string $type = 'shipping';
+    public float $total = 0.0;
+
+    public function set_total( $total ): void {
+        $this->total = (float) $total;
+    }
+
     public function __call( string $name, array $args ) {
         return null;
     }

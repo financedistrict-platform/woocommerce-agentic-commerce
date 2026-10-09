@@ -99,6 +99,7 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
             'payment_method'        => 'fd_dummy_payment',
             'payment_method_title'  => 'Dummy Payment (Test)',
             'network'               => 'dummy:testnet',
+            'settled_amount'        => $checkout_meta[ self::HANDLER_ID ]['prepared_amount'] ?? null,
             'order_meta'            => array(
                 '_fd_dummy_tx_hash' => $fake_tx,
                 '_fd_dummy_network' => 'dummy:testnet',

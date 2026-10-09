@@ -233,6 +233,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             'payment_method'        => 'fd_prism_x402',
             'payment_method_title'  => 'Prism Stablecoin',
             'network'               => $requirement['network'],
+            'settled_amount'        => $input['checkout_meta'][ self::HANDLER_ID ]['prepared_amount'] ?? null,
             'order_meta'            => array(
                 '_fd_prism_tx_hash' => $tx_ref,
                 '_fd_prism_network' => $requirement['network'],

@@ -19,6 +19,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $session['agent_fingerprint'] = hash( 'sha256', '' );
         $session['ucp_version']       = null;
         $session['expires_at']        = gmdate( 'Y-m-d H:i:s', time() + 3600 );
+        $session['payment_meta']      = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695 ) ) );
 
         $this->db                         = new FD_Test_Wpdb();
         $this->db->sessions[ self::SESSION_ID ] = $session;
@@ -39,7 +40,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
             public function settle_payment( array $input ): array {
                 $this->settled[] = $input;
-                return array( 'success' => true, 'transaction_reference' => '0x' . str_repeat( 'cd', 32 ), 'network' => 'eip155:84532' );
+                return array( 'success' => true, 'transaction_reference' => '0x' . str_repeat( 'cd', 32 ), 'network' => 'eip155:84532', 'settled_amount' => 4695 );
             }
         };
     }

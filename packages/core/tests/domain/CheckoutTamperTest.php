@@ -33,6 +33,8 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->handler = new class() extends FD_Prism_Handler {
             public array $prepared = array();
+            public array $settled  = array();
+            public array $result   = array();
 
             public function __construct() {
                 parent::__construct( 'https://gw.example', 'test-key' );
@@ -42,12 +44,23 @@ final class CheckoutTamperTest extends TestCase {
                 $this->prepared[] = $input['total'];
                 return array( 'prepared_amount' => $input['total'] );
             }
+
+            public function validate_instrument( array $instrument ): ?string {
+                return null;
+            }
+
+            public function settle_payment( array $input ): array {
+                $this->settled[] = $input['checkout_meta'][ $this->id() ]['prepared_amount'] ?? null;
+                return $this->result;
+            }
         };
     }
 
     protected function tearDown(): void {
         FD_Test_Product_Store::$products = array();
         FD_Test_WC::$rates               = array();
+        FD_Test_WC::$tax_rate            = 0.0;
+        FD_Test_WC::$included_rate       = 0.0;
     }
 
     private function controller(): FD_UCP_Checkout_Controller {
@@ -72,6 +85,43 @@ final class CheckoutTamperTest extends TestCase {
             array(),
             $body
         ) );
+    }
+
+    private function complete(): WP_REST_Response {
+        return $this->controller()->complete_session( new WP_REST_Request(
+            '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
+            array(),
+            array( 'id' => self::SESSION_ID ),
+            array( 'payment' => array( 'instruments' => array( array(
+                'handler_id' => $this->handler->id(),
+                'credential' => array( 'payload' => 'signed' ),
+            ) ) ) )
+        ) );
+    }
+
+    private function quoted_session( int $settled, ?int $prepared, array $totals ): void {
+        $this->db->sessions[ self::SESSION_ID ]['totals']       = json_encode( $totals );
+        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( array(
+            $this->handler->id() => null === $prepared ? array() : array( 'prepared_amount' => $prepared ),
+        ) );
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => $settled );
+    }
+
+    private static function untaxed_totals(): array {
+        return json_decode( FD_Test_Golden_Renderer::input( 'checkout-session.json' )['totals'], true );
+    }
+
+    private static function taxed_totals(): array {
+        return array(
+            array( 'type' => 'subtotal', 'amount' => 4200 ),
+            array( 'type' => 'fulfillment', 'amount' => 495 ),
+            array( 'type' => 'tax', 'amount' => 892 ),
+            array( 'type' => 'total', 'amount' => 5587 ),
+        );
+    }
+
+    private function order(): WC_Order {
+        return FD_Test_Order_Store::$orders[1001];
     }
 
     private function stored_totals( string $id = self::SESSION_ID ): array {
@@ -351,5 +401,174 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'flat_rate1', $this->stored_group()['selected_option_id'] );
         $this->assertSame( 4695, $this->stored_total() );
+    }
+
+    public function test_update_quotes_tax_on_a_tax_exclusive_store(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'tax' => 892, 'total' => 5587 ), $this->stored_totals() );
+        $this->assertSame( array( 5587 ), $this->handler->prepared );
+        $this->assertSame( '55.87', $this->order()->get_total() );
+    }
+
+    public function test_create_quotes_tax_on_a_tax_exclusive_store(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+
+        $response = $this->create( array(
+            'line_items'  => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 2 ) ),
+            'fulfillment' => self::shipping( self::berlin(), array(), 'flat_rate1' ),
+        ) );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 3600, 'fulfillment' => 495, 'tax' => 778, 'total' => 4873 ), $this->stored_totals( wp_generate_uuid4() ) );
+        $this->assertSame( array( 4873 ), $this->handler->prepared );
+    }
+
+    public function test_update_reprices_stored_items_at_the_current_price(): void {
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 5600, 'fulfillment' => 495, 'total' => 6095 ), $this->stored_totals() );
+        $this->assertSame( array( 6095 ), $this->handler->prepared );
+    }
+
+    public function test_complete_refuses_to_settle_a_quote_without_tax(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_refuses_to_settle_when_product_price_changed_after_quote(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_complete_refuses_to_settle_without_a_prepared_amount(): void {
+        $this->quoted_session( 4695, null, self::untaxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_complete_refuses_to_settle_when_prepared_amount_differs_from_quote(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+        $this->quoted_session( 5587, 4695, self::taxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_complete_marks_paid_when_quote_order_and_settlement_agree(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+        $this->quoted_session( 5587, 5587, self::taxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 5587 ), $this->handler->settled );
+        $this->assertContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'completed', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_holds_the_order_when_settled_amount_is_short(): void {
+        FD_Test_WC::$tax_rate = 0.19;
+        $this->quoted_session( 4695, 5587, self::taxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+        $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_holds_the_order_when_settled_amount_is_missing(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        unset( $this->handler->result['settled_amount'] );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+    }
+
+    public function test_held_session_cannot_be_completed_again(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->db->sessions[ self::SESSION_ID ]['status'] = 'requires_escalation';
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_tax_inclusive_store_quotes_the_order_total_for_a_tax_free_destination(): void {
+        FD_Test_WC::$included_rate = 0.19;
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 3529, 'fulfillment' => 495, 'total' => 4024 ), $this->stored_totals() );
+        $this->assertSame( array( 4024 ), $this->handler->prepared );
+    }
+
+    public function test_tax_inclusive_store_quotes_shipping_tax(): void {
+        FD_Test_WC::$included_rate = 0.19;
+        FD_Test_WC::$tax_rate      = 0.19;
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 3529, 'fulfillment' => 495, 'tax' => 765, 'total' => 4789 ), $this->stored_totals() );
+        $this->assertSame( array( 4789 ), $this->handler->prepared );
+    }
+
+    public function test_complete_refuses_to_settle_an_order_that_is_already_paid(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->order()->status = 'processing';
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'order_not_payable', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_update_quotes_on_a_fresh_order_when_the_stored_order_is_already_paid(): void {
+        $this->order()->status = 'processing';
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 1, FD_Test_Order_Store::$created );
+        $this->assertSame( array(), $this->order()->items );
     }
 }
