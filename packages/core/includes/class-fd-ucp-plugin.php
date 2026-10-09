@@ -52,7 +52,7 @@ class FD_UCP_Plugin {
         $checkout       = new FD_UCP_Checkout_Controller( $this->payment_registry );
         $order          = new FD_UCP_Order_Controller();
         $returns        = new FD_UCP_Returns_Controller();
-        $promotions     = new FD_UCP_Promotions_Controller();
+        $promotions     = new FD_UCP_Promotions_Controller( $checkout );
         $buyer_identity = new FD_UCP_Buyer_Identity_Controller();
         $cart           = new FD_UCP_Cart_Controller();
 

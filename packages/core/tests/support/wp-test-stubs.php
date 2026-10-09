@@ -275,7 +275,11 @@ final class FD_Test_Product_Store {
 }
 
 final class FD_Test_Product {
-    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true, private bool $purchasable = true, private ?int $stock = null, private bool $backorders = false, private ?int $stock_owner = null ) {
+    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true, private bool $purchasable = true, private ?int $stock = null, private bool $backorders = false, private ?int $stock_owner = null, private bool $has_variations = false ) {
+    }
+
+    public function has_child(): bool {
+        return $this->has_variations;
     }
 
     public function get_stock_managed_by_id(): int {
@@ -308,6 +312,145 @@ final class FD_Test_Product {
 
     public function is_purchasable(): bool {
         return $this->purchasable;
+    }
+}
+
+final class FD_Test_Coupon_Store {
+    public static array $coupons = array();
+    public static array $emails  = array();
+
+    public static function add( string $code, string $type, float $amount, array $options = array() ): void {
+        self::$coupons[ strtolower( $code ) ] = $options + array(
+            'code'       => $code,
+            'type'       => $type,
+            'amount'     => $amount,
+            'limit'      => 0,
+            'used'       => 0,
+            'minimum'    => 0.0,
+            'emails'     => array(),
+            'per_user'   => 0,
+            'individual' => false,
+        );
+    }
+
+    public static function used( string $code ): int {
+        return self::$coupons[ strtolower( $code ) ]['used'];
+    }
+
+    public static function reset(): void {
+        self::$coupons = array();
+        self::$emails  = array();
+    }
+}
+
+final class FD_Test_Coupon_Data_Store {
+    public function get_usage_by_email( WC_Coupon $coupon, string $email ): int {
+        return FD_Test_Coupon_Store::$emails[ strtolower( $coupon->get_code() ) ][ $email ] ?? 0;
+    }
+}
+
+class WC_Coupon {
+    private array $data;
+
+    public function __construct( string $code = '' ) {
+        $this->data = FD_Test_Coupon_Store::$coupons[ strtolower( $code ) ] ?? array();
+    }
+
+    public function get_id(): int {
+        return $this->data ? 7 : 0;
+    }
+
+    public function get_code(): string {
+        return $this->data['code'] ?? '';
+    }
+
+    public function get_discount_type(): string {
+        return $this->data['type'] ?? '';
+    }
+
+    public function get_amount(): string {
+        return (string) ( $this->data['amount'] ?? 0 );
+    }
+
+    public function get_usage_limit(): int {
+        return $this->data['limit'] ?? 0;
+    }
+
+    public function get_usage_count(): int {
+        return $this->data['used'] ?? 0;
+    }
+
+    public function get_minimum_amount(): float {
+        return $this->data['minimum'] ?? 0.0;
+    }
+
+    public function get_email_restrictions(): array {
+        return $this->data['emails'] ?? array();
+    }
+
+    public function get_usage_limit_per_user(): int {
+        return $this->data['per_user'] ?? 0;
+    }
+
+    public function get_individual_use(): bool {
+        return $this->data['individual'] ?? false;
+    }
+
+    public function get_data_store(): FD_Test_Coupon_Data_Store {
+        return new FD_Test_Coupon_Data_Store();
+    }
+
+    public function is_valid(): bool {
+        return true;
+    }
+
+    public function get_error_message(): string {
+        return '';
+    }
+
+    public function get_description(): string {
+        return '';
+    }
+}
+
+final class WC_Discounts {
+    public function __construct( private WC_Order $order ) {
+    }
+
+    public function is_coupon_valid( WC_Coupon $coupon ): true|WP_Error {
+        if ( $coupon->get_usage_limit() > 0 && $coupon->get_usage_count() >= $coupon->get_usage_limit() ) {
+            return new WP_Error( 'invalid_coupon', 'Coupon usage limit has been reached' );
+        }
+        if ( $coupon->get_minimum_amount() > $this->order->get_subtotal() ) {
+            return new WP_Error( 'invalid_coupon', 'The minimum spend for this coupon has not been met' );
+        }
+        return true;
+    }
+}
+
+final class WC_Order_Item_Coupon {
+    public string $type    = 'coupon';
+    private string $code   = '';
+    private float $amount  = 0.0;
+
+    public function set_code( string $code ): void {
+        $this->code = $code;
+    }
+
+    public function get_code(): string {
+        return $this->code;
+    }
+
+    public function set_discount( float $amount ): void {
+        $this->amount = $amount;
+    }
+
+    public function get_discount(): string {
+        return number_format( $this->amount, 2, '.', '' );
+    }
+
+    public function discount(): float {
+        return $this->amount;
     }
 }
 
@@ -449,6 +592,10 @@ class WC_Order {
     public float $subtotal = 0.0;
     public float $shipping = 0.0;
     public float $tax      = 0.0;
+    public float $discount = 0.0;
+    public array $coupon_items = array();
+    public string $billing_email = '';
+    public bool $usage_recorded = false;
 
     public function __construct() {
         $this->meta = array(
@@ -487,16 +634,57 @@ class WC_Order {
     }
 
     public function add_item( $item ): void {
+        if ( $item instanceof WC_Order_Item_Coupon ) {
+            $this->coupon_items[] = $item;
+            return;
+        }
         $this->items[] = array( $item->type, (float) $item->total );
     }
 
+    public function get_coupon_codes(): array {
+        return array_map( static fn( WC_Order_Item_Coupon $i ): string => $i->get_code(), $this->coupon_items );
+    }
+
+    public function get_items( string $type = 'line_item' ): array {
+        return 'coupon' === $type ? $this->coupon_items : array();
+    }
+
+    public function recalculate_coupons(): void {
+        $lines = 0.0;
+        foreach ( $this->items as $item ) {
+            $lines += 'line_item' === $item[0] ? $item[1] : 0.0;
+        }
+        foreach ( $this->coupon_items as $item ) {
+            $coupon = new WC_Coupon( $item->get_code() );
+            $amount = (float) $coupon->get_amount();
+            $item->set_discount( round( 'percent' === $coupon->get_discount_type() ? $lines * $amount / 100 : min( $amount, $lines ), 2 ) );
+        }
+        $this->calculate_totals();
+    }
+
+    public function get_billing_email(): string {
+        return $this->billing_email;
+    }
+
+    public function set_billing_email( string $email ): void {
+        $this->billing_email = $email;
+    }
+
+    public function get_total_discount(): string {
+        return number_format( $this->discount, 2, '.', '' );
+    }
+
     public function remove_order_items( ?string $type = null ): void {
+        if ( null === $type || 'coupon' === $type ) {
+            $this->coupon_items = array();
+        }
         $this->items = array_values( array_filter( $this->items, static fn( array $i ): bool => null !== $type && $i[0] !== $type ) );
     }
 
     public function calculate_totals( bool $and_taxes = true ): float {
         $lines          = 0.0;
         $this->shipping = 0.0;
+        $this->discount = 0.0;
         foreach ( $this->items as $item ) {
             if ( 'shipping' === $item[0] ) {
                 $this->shipping += $item[1];
@@ -505,8 +693,12 @@ class WC_Order {
             }
         }
         $this->subtotal = round( $lines / ( 1 + FD_Test_WC::$included_rate ), 2 );
-        $this->tax      = round( ( $this->subtotal + $this->shipping ) * FD_Test_WC::$tax_rate, 2 );
-        $this->total    = number_format( $this->subtotal + $this->shipping + $this->tax, 2, '.', '' );
+        foreach ( $this->coupon_items as $item ) {
+            $this->discount += $item->discount();
+        }
+        $this->discount = min( $this->discount, round( $lines / ( 1 + FD_Test_WC::$included_rate ), 2 ) );
+        $this->tax      = round( ( $this->subtotal - $this->discount + $this->shipping ) * FD_Test_WC::$tax_rate, 2 );
+        $this->total    = number_format( $this->subtotal - $this->discount + $this->shipping + $this->tax, 2, '.', '' );
         return (float) $this->total;
     }
 
@@ -542,6 +734,12 @@ class WC_Order {
 
     public function payment_complete( string $transaction_id = '' ): bool {
         $this->calls[] = 'payment_complete';
+        if ( ! $this->usage_recorded ) {
+            $this->usage_recorded = true;
+            foreach ( $this->get_coupon_codes() as $code ) {
+                FD_Test_Coupon_Store::$coupons[ strtolower( $code ) ]['used']++;
+            }
+        }
         $this->status  = 'processing';
         return true;
     }

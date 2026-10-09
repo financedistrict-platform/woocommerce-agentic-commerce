@@ -114,6 +114,7 @@ require_once $base . '/ucp/class-fd-ucp-discovery.php';
 require_once $base . '/ucp/class-fd-ucp-cart-controller.php';
 require_once $base . '/class-fd-rate-limiter.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-pricing.php';
+require_once $base . '/ucp/class-fd-ucp-coupon-rules.php';
 require_once $base . '/ucp/class-fd-ucp-catalog-controller.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-controller.php';
 require_once $base . '/ucp/class-fd-ucp-order-controller.php';

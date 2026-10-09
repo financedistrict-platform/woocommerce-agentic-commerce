@@ -72,6 +72,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-discovery.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-catalog-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-checkout-pricing.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-coupon-rules.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-checkout-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-order-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-returns-controller.php';
