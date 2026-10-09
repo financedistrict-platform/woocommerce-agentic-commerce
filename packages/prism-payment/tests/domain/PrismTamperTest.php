@@ -318,6 +318,171 @@ final class PrismTamperTest extends TestCase {
         $this->assertRejectedBeforeSettle( $result );
     }
 
+    private function settle_with_stored_entry( array $entry, array $signed = array() ): array {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] = array( $entry );
+
+        $credential                                                         = self::credential();
+        $credential['paymentPayload']['accepted']                           = $entry;
+        $credential['paymentPayload']['payload']['authorization']['value'] = $entry['amount'] ?? self::AMOUNT;
+        $credential['paymentPayload']['payload']['authorization']['to']    = $entry['payTo'] ?? self::PAY_TO;
+        $credential['paymentPayload']['payload']['authorization']       = $signed + $credential['paymentPayload']['payload']['authorization'];
+
+        return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => $credential,
+            'checkout_meta' => $meta,
+        ) );
+    }
+
+    public static function unusable_stored_amounts(): array {
+        return array(
+            'zero'                  => array( '0' ),
+            'several zeros'         => array( '000' ),
+            'leading zeros'         => array( '0100010' ),
+            'plus sign'             => array( '+100010' ),
+            'whitespace'            => array( ' 100010' ),
+            'empty'                 => array( '' ),
+            'hexadecimal'           => array( '0x186aa' ),
+            'exponent'              => array( '1e5' ),
+        );
+    }
+
+    #[DataProvider( 'unusable_stored_amounts' )]
+    public function test_stored_amount_that_is_not_a_positive_canonical_integer_is_rejected( string $amount ): void {
+        $entry = array_merge( self::stored_entry(), array( 'amount' => $amount ) );
+
+        $this->assertRejectedBeforeSettle( $this->settle_with_stored_entry( $entry ) );
+    }
+
+    public static function stored_entries_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'scheme', 'network', 'asset', 'payTo', 'amount' ) as $field ) {
+            $cases[ "stored entry without $field" ]           = array( $field, null );
+            $cases[ "stored entry with empty $field" ]        = array( $field, '' );
+            $cases[ "stored entry with non-string $field" ]   = array( $field, array( 'x' ) );
+        }
+        return $cases;
+    }
+
+    #[DataProvider( 'stored_entries_with_missing_data' )]
+    public function test_stored_entry_with_missing_or_empty_field_is_rejected( string $field, $value ): void {
+        $entry = self::stored_entry();
+        if ( null === $value ) {
+            unset( $entry[ $field ] );
+        } else {
+            $entry[ $field ] = $value;
+        }
+
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] = array( $entry );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unusable_stored_quotes(): array {
+        return array(
+            'no quote at all'        => array( null ),
+            'quote is a string'      => array( 'quote' ),
+            'quote without accepts'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ) ) ),
+            'quote with empty list'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => array() ) ),
+            'accepts is not a list'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => 'any' ) ),
+            'resource url empty'     => array( array( 'x402Version' => 2, 'resource' => array( 'url' => '' ), 'accepts' => array( self::stored_entry() ) ) ),
+            'version as string'      => array( array( 'x402Version' => '2', 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => array( self::stored_entry() ) ) ),
+        );
+    }
+
+    #[DataProvider( 'unusable_stored_quotes' )]
+    public function test_unusable_stored_quote_is_rejected_before_settle( $config ): void {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config'] = $config;
+        if ( null === $config ) {
+            unset( $meta['xyz.fd.prism_payment']['ucp'] );
+        }
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unreadable_credentials(): array {
+        return array(
+            'null'                   => array( null ),
+            'empty string'           => array( '' ),
+            'plain text'             => array( 'paid' ),
+            'broken base64'          => array( '!!!not-base64!!!' ),
+            'base64 of plain text'   => array( base64_encode( 'paid' ) ),
+            'empty array'            => array( array() ),
+            'json scalar'            => array( '42' ),
+            'boolean'                => array( true ),
+            'payload is a string'    => array( array( 'paymentPayload' => 'x' ) ),
+            'payload is empty'       => array( array( 'paymentPayload' => array() ) ),
+        );
+    }
+
+    #[DataProvider( 'unreadable_credentials' )]
+    public function test_unreadable_credential_is_rejected_before_settle( $credential ): void {
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public static function authorizations_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'from', 'to', 'value', 'validAfter', 'validBefore', 'nonce' ) as $field ) {
+            $cases[ "authorization without $field" ]    = array( $field, null );
+            $cases[ "authorization with empty $field" ] = array( $field, '' );
+            $cases[ "authorization with integer $field" ] = array( $field, 1 );
+        }
+        $cases['authorization with short nonce']       = array( 'nonce', '0x12' );
+        $cases['authorization with non-hex nonce']     = array( 'nonce', '0x' . str_repeat( 'zz', 32 ) );
+        $cases['authorization with negative value']    = array( 'value', '-100010' );
+        $cases['authorization with decimal value']     = array( 'value', '100010.0' );
+        $cases['authorization with padded value']      = array( 'value', '0100010' );
+        return $cases;
+    }
+
+    #[DataProvider( 'authorizations_with_missing_data' )]
+    public function test_authorization_with_missing_or_malformed_field_is_rejected( string $field, $value ): void {
+        $credential = self::credential();
+        if ( null === $value ) {
+            unset( $credential['paymentPayload']['payload']['authorization'][ $field ] );
+        } else {
+            $credential['paymentPayload']['payload']['authorization'][ $field ] = $value;
+        }
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public static function accepted_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'scheme', 'network', 'asset', 'payTo', 'amount' ) as $field ) {
+            $cases[ "accepted without $field" ]    = array( $field, null );
+            $cases[ "accepted with empty $field" ] = array( $field, '' );
+        }
+        return $cases;
+    }
+
+    #[DataProvider( 'accepted_with_missing_data' )]
+    public function test_accepted_requirements_with_missing_or_empty_field_are_rejected( string $field, $value ): void {
+        $credential = self::credential();
+        if ( null === $value ) {
+            unset( $credential['paymentPayload']['accepted'][ $field ] );
+        } else {
+            $credential['paymentPayload']['accepted'][ $field ] = $value;
+        }
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
     public function test_storefront_checkout_never_offers_the_prism_gateway(): void {
         $GLOBALS['fd_test_options']['woocommerce_fd_prism_x402_settings'] = array(
             'enabled' => 'yes',
