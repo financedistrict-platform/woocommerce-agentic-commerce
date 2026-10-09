@@ -227,6 +227,10 @@ Each UCP version advertises its own capability set at `/.well-known/ucp/<version
 
 Discount codes are a WooCommerce-specific REST route (`/promotions/validate`, `/checkout-sessions/{id}/promotions`). Only 2026-04-08 advertises them as a capability.
 
+Applying a code adds the coupon to the WooCommerce order. The code is checked against the coupon's limits, minimum spend, product, individual-use and buyer-email rules, and its use is counted when the order is paid. The checkout total and the payment quote are rebuilt from the discounted order. A coupon that stops applying after a later change is dropped from the totals.
+
+Line items must be purchasable and in stock. A variable product's parent is refused: send the ID of a concrete variation.
+
 ## Custom Payment Handlers
 
 The core plugin defines a payment handler interface. Any payment provider can integrate without modifying core — just register via the action hook:

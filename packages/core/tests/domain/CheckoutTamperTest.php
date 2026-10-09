@@ -63,6 +63,7 @@ final class CheckoutTamperTest extends TestCase {
 
     protected function tearDown(): void {
         FD_Test_Product_Store::$products = array();
+        FD_Test_Coupon_Store::reset();
         FD_Test_WC::$rates               = array();
         FD_Test_WC::$tax_rate            = 0.0;
         FD_Test_WC::$included_rate       = 0.0;
@@ -803,16 +804,18 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
     }
 
-    #[DataProvider( 'foreign_tokens' )]
-    public function test_promotions_reject_a_foreign_token( ?string $token ): void {
-        $response = ( new FD_UCP_Promotions_Controller() )->apply( new WP_REST_Request(
+    private function promote( string $code, ?string $token = self::TOKEN ): WP_REST_Response {
+        return ( new FD_UCP_Promotions_Controller( $this->controller() ) )->apply( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/promotions',
             self::headers( $token ) + array( 'UCP-Agent' => '' ),
             array( 'id' => self::SESSION_ID ),
-            array( 'code' => 'SAVE10' )
+            array( 'code' => $code )
         ) );
+    }
 
-        $this->assertSame( 403, $response->get_status() );
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_promotions_reject_a_foreign_token( ?string $token ): void {
+        $this->assertSame( 403, $this->promote( 'SAVE10', $token )->get_status() );
     }
 
     public function test_cart_token_guards_the_cart_and_carries_into_its_checkout_session(): void {
@@ -1378,6 +1381,323 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( PHP_INT_MAX, 0 ) );
         $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( 100, PHP_INT_MAX ) );
         $this->assertInstanceOf( WP_Error::class, FD_UCP_Checkout_Pricing::priced_totals( 100, 100, PHP_INT_MAX ) );
+    }
+
+    public function test_create_rejects_the_parent_of_a_variable_product(): void {
+        FD_Test_Product_Store::$products[500] = new FD_Test_Product( 500, '18.00', 'Shirt', true, true, null, false, null, true );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '500' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'variation_required', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_update_rejects_the_parent_of_a_variable_product(): void {
+        FD_Test_Product_Store::$products[500] = new FD_Test_Product( 500, '18.00', 'Shirt', true, true, null, false, null, true );
+
+        $response = $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '500' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'variation_required', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->handler->prepared );
+    }
+
+    public function test_cart_line_items_reject_the_parent_of_a_variable_product(): void {
+        FD_Test_Product_Store::$products[500] = new FD_Test_Product( 500, '18.00', 'Shirt', true, true, null, false, null, true );
+
+        $priced = FD_UCP_Checkout_Pricing::catalog_line_items( array( array( 'item' => array( 'id' => '500' ), 'quantity' => 1 ) ), false );
+
+        $this->assertInstanceOf( WP_Error::class, $priced );
+        $this->assertSame( 'variation_required', $priced->get_error_code() );
+    }
+
+    public function test_complete_refuses_to_settle_a_product_that_became_variable(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '18.00', 'Shirt', true, true, null, false, null, true );
+
+        $response = $this->complete();
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'variation_required', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_create_accepts_a_concrete_variation(): void {
+        FD_Test_Product_Store::$products[501] = new FD_Test_Product( 501, '24.00', 'Shirt - Large', true, true, 5, false, 500 );
+
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '501' ), 'quantity' => 2 ) ) ) );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 4800, $this->stored_totals( wp_generate_uuid4() )['subtotal'] );
+    }
+
+    public function test_promotion_is_written_to_the_order_and_payment_is_prepared_again(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+
+        $response = $this->promote( 'SAVE10' );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => 420, 'total' => 4275 ), $this->stored_totals() );
+        $this->assertSame( array( 4275 ), $this->handler->prepared );
+        $this->assertSame( 4275, json_decode( $this->db->sessions[ self::SESSION_ID ]['payment_meta'], true )[ $this->handler->id() ]['prepared_amount'] );
+        $this->assertSame( array( 'SAVE10' ), $this->order()->get_coupon_codes() );
+        $this->assertSame( '42.75', $this->order()->get_total() );
+        $this->assertSame( 420, $response->get_data()['promotion_applied']['discount'] );
+        $this->assertSame( 0, FD_Test_Coupon_Store::used( 'SAVE10' ) );
+    }
+
+    public function test_discounted_session_completes_at_the_discounted_total(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->promote( 'SAVE10' );
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 4275 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 4275 ), $this->handler->settled );
+        $this->assertContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( array( 'SAVE10' ), $this->order()->get_coupon_codes() );
+        $this->assertSame( '42.75', $this->order()->get_total() );
+        $this->assertSame( 1, FD_Test_Coupon_Store::used( 'SAVE10' ) );
+    }
+
+    public function test_full_price_settlement_of_a_discounted_session_is_held(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->promote( 'SAVE10' );
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 4695 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_coupon_over_its_usage_limit_is_refused_and_changes_nothing(): void {
+        FD_Test_Coupon_Store::add( 'ONCE', 'percent', 50, array( 'limit' => 1, 'used' => 1 ) );
+
+        $response = $this->promote( 'ONCE' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'coupon_invalid', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->handler->prepared );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_unknown_coupon_is_refused(): void {
+        $response = $this->promote( 'NOPE' );
+
+        $this->assertSame( 404, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 4695, $this->stored_total() );
+    }
+
+    public function test_discount_cannot_exceed_the_subtotal(): void {
+        FD_Test_Coupon_Store::add( 'HUGE', 'fixed_cart', 1000 );
+
+        $response = $this->promote( 'HUGE' );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => 4200, 'total' => 495 ), $this->stored_totals() );
+        $this->assertSame( array( 495 ), $this->handler->prepared );
+    }
+
+    public function test_promotion_that_leaves_nothing_to_pay_is_refused_and_not_kept_on_the_order(): void {
+        FD_Test_Coupon_Store::add( 'FREE', 'percent', 100 );
+        $this->db->sessions[ self::SESSION_ID ]['fulfillment'] = null;
+
+        $response = $this->promote( 'FREE' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_total', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->handler->prepared );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_line_item_change_reprices_the_applied_coupon(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->promote( 'SAVE10' );
+
+        $response = $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => 180, 'total' => 2115 ), $this->stored_totals() );
+        $this->assertSame( array( 4275, 2115 ), $this->handler->prepared );
+    }
+
+    public function test_applied_coupon_is_dropped_when_its_conditions_no_longer_hold(): void {
+        FD_Test_Coupon_Store::add( 'BIGSPEND', 'fixed_cart', 5, array( 'minimum' => 40.0 ) );
+        $this->promote( 'BIGSPEND' );
+
+        $response = $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '205' ), 'quantity' => 1 ) ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'subtotal' => 600, 'fulfillment' => 495, 'total' => 1095 ), $this->stored_totals() );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_complete_refuses_a_discounted_quote_whose_coupon_stopped_applying(): void {
+        FD_Test_Coupon_Store::add( 'ONCE', 'percent', 50, array( 'limit' => 1 ) );
+        $this->promote( 'ONCE' );
+        FD_Test_Coupon_Store::$coupons['once']['used'] = 1;
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 4275 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'coupon_invalid', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_coupon_usage_is_not_consumed_by_quoting_and_is_counted_once_at_payment(): void {
+        FD_Test_Coupon_Store::add( 'LAST', 'percent', 10, array( 'limit' => 1 ) );
+
+        $this->assertSame( 200, $this->promote( 'LAST' )->get_status() );
+        $this->assertSame( 200, $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) ) )->get_status() );
+        $this->assertSame( 200, $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) )->get_status() );
+        $this->assertSame( 0, FD_Test_Coupon_Store::used( 'LAST' ) );
+        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => 180, 'total' => 2115 ), $this->stored_totals() );
+
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 2115 );
+        $response              = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 1, FD_Test_Coupon_Store::used( 'LAST' ) );
+    }
+
+    public function test_coupon_usage_is_not_counted_when_completion_is_refused(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->promote( 'SAVE10' );
+        $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 1 );
+
+        $this->assertSame( 409, $this->complete()->get_status() );
+        $this->assertSame( 0, FD_Test_Coupon_Store::used( 'SAVE10' ) );
+    }
+
+    public function test_individual_use_coupon_cannot_be_combined(): void {
+        FD_Test_Coupon_Store::add( 'SOLO', 'percent', 10, array( 'individual' => true ) );
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->assertSame( 200, $this->promote( 'SAVE10' )->get_status() );
+
+        $response = $this->promote( 'SOLO' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'coupon_invalid', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array( 'SAVE10' ), $this->order()->get_coupon_codes() );
+        $this->assertSame( 4275, $this->stored_total() );
+    }
+
+    public function test_coupon_cannot_be_added_to_an_individual_use_coupon(): void {
+        FD_Test_Coupon_Store::add( 'SOLO', 'percent', 10, array( 'individual' => true ) );
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->assertSame( 200, $this->promote( 'SOLO' )->get_status() );
+
+        $response = $this->promote( 'SAVE10' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'SOLO' ), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_coupon_restricted_to_other_emails_is_refused(): void {
+        FD_Test_Coupon_Store::add( 'STAFF', 'percent', 50, array( 'emails' => array( '*@corp.example' ) ) );
+
+        $response = $this->promote( 'STAFF' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'coupon_invalid', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_email_restricted_coupon_is_refused_without_a_buyer_email(): void {
+        FD_Test_Coupon_Store::add( 'STAFF', 'percent', 50, array( 'emails' => array( '*@corp.example' ) ) );
+        $this->db->sessions[ self::SESSION_ID ]['buyer'] = null;
+
+        $response = $this->promote( 'STAFF' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_email_restricted_coupon_is_accepted_for_a_matching_buyer(): void {
+        FD_Test_Coupon_Store::add( 'STAFF', 'percent', 50, array( 'emails' => array( '*@example.com' ) ) );
+
+        $response = $this->promote( 'STAFF' );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'STAFF' ), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_complete_refuses_when_the_buyer_email_no_longer_matches_the_coupon(): void {
+        FD_Test_Coupon_Store::add( 'STAFF', 'percent', 50, array( 'emails' => array( '*@example.com' ) ) );
+        $this->assertSame( 200, $this->promote( 'STAFF' )->get_status() );
+        $buyer                                           = json_decode( $this->db->sessions[ self::SESSION_ID ]['buyer'], true );
+        $buyer['email']                                  = 'mallory@elsewhere.test';
+        $this->db->sessions[ self::SESSION_ID ]['buyer'] = json_encode( $buyer );
+        $this->handler->result                           = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 2348 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'coupon_invalid', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_coupon_over_its_per_user_limit_is_refused_by_buyer_email(): void {
+        FD_Test_Coupon_Store::add( 'SOLO1', 'percent', 10, array( 'per_user' => 1 ) );
+        FD_Test_Coupon_Store::$emails['solo1']['anna.schmidt@example.com'] = 1;
+
+        $response = $this->promote( 'SOLO1' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public function test_per_user_limited_coupon_is_refused_without_a_buyer_email(): void {
+        FD_Test_Coupon_Store::add( 'SOLO1', 'percent', 10, array( 'per_user' => 1 ) );
+        $this->db->sessions[ self::SESSION_ID ]['buyer'] = null;
+
+        $response = $this->promote( 'SOLO1' );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    #[DataProvider( 'closed_session_statuses' )]
+    public function test_promotion_is_refused_on_a_closed_session( string $status ): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->db->sessions[ self::SESSION_ID ]['status'] = $status;
+
+        $response = $this->promote( 'SAVE10' );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
+    }
+
+    public static function closed_session_statuses(): array {
+        return array(
+            'canceled'            => array( 'canceled' ),
+            'completed'           => array( 'completed' ),
+            'requires_escalation' => array( 'requires_escalation' ),
+            'expired'             => array( 'expired' ),
+        );
+    }
+
+    public function test_promotion_is_refused_while_the_session_is_locked(): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->db->held = array( self::lock_name() );
+
+        $response = $this->promote( 'SAVE10' );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_busy', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->order()->get_coupon_codes() );
     }
 
     private static function one_item(): array {

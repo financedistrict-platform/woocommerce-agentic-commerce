@@ -3,7 +3,8 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Checkout_Controller {
 
-    private const NAMESPACE = 'fd-ucp/v1';
+    private const NAMESPACE       = 'fd-ucp/v1';
+    private const FROZEN_STATUSES = array( 'canceled', 'completed', 'requires_escalation', 'expired' );
     private FD_Payment_Registry $registry;
     private FD_Rate_Limiter $rate_limiter;
 
@@ -202,23 +203,9 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function do_update_session( WP_REST_Request $request ): WP_REST_Response {
-        $session = $this->load_session( (string) $request->get_param( 'id' ) );
-        if ( ! $session ) {
-            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
-        }
-
-        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-        if ( null !== $pin ) {
-            return $pin;
-        }
-
-        $ownership = $this->verify_ownership( $request, $session );
-        if ( is_wp_error( $ownership ) ) {
-            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
-        }
-
-        if ( in_array( $session['status'], array( 'canceled', 'completed', 'requires_escalation', 'expired' ), true ) ) {
-            return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
+        $session = $this->writable_session( $request );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
         $body    = $request->get_json_params();
@@ -265,14 +252,116 @@ class FD_UCP_Checkout_Controller {
             $updates['fulfillment'] = wp_json_encode( $fulfillment );
         }
 
-        $quote = $this->quote(
+        $requoted = $this->requote(
+            $session,
+            $updates,
             $line_items,
             json_decode( $updates['buyer'] ?? $session['buyer'] ?? 'null', true ),
+            $fulfillment
+        );
+        if ( is_wp_error( $requoted ) ) {
+            return FD_UCP_Error::response( $requoted->get_error_code(), $requoted->get_error_message(), 422 );
+        }
+        $this->update_session_row( $session['id'], $requoted['updates'] );
+
+        $session = $this->load_session( $session['id'] );
+
+        return new WP_REST_Response(
+            FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+            200
+        );
+    }
+
+    public function apply_promotion( WP_REST_Request $request, string $code ): WP_REST_Response {
+        return $this->with_session_lock(
+            (string) $request->get_param( 'id' ),
+            'session_busy',
+            'Checkout session is being changed by another request',
+            fn() => $this->do_apply_promotion( $request, $code )
+        );
+    }
+
+    private function do_apply_promotion( WP_REST_Request $request, string $code ): WP_REST_Response {
+        $session = $this->writable_session( $request );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
+        }
+
+        $coupon = new WC_Coupon( $code );
+        if ( ! $coupon->get_id() ) {
+            return FD_UCP_Error::response( 'coupon_not_found', 'Coupon not found', 404 );
+        }
+
+        $line_items = FD_UCP_Checkout_Pricing::catalog_line_items( json_decode( $session['line_items'] ?? '[]', true ) ?: array(), true );
+        if ( is_wp_error( $line_items ) ) {
+            return FD_UCP_Error::response( $line_items->get_error_code(), $line_items->get_error_message(), 422 );
+        }
+
+        $requoted = $this->requote(
+            $session,
+            array( 'line_items' => wp_json_encode( $line_items ) ),
+            $line_items,
+            json_decode( $session['buyer'] ?? 'null', true ),
+            json_decode( $session['fulfillment'] ?? 'null', true ),
+            $coupon->get_code()
+        );
+        if ( is_wp_error( $requoted ) ) {
+            return FD_UCP_Error::response( $requoted->get_error_code(), $requoted->get_error_message(), 422 );
+        }
+
+        $discount = FD_UCP_Checkout_Pricing::coupon_discount_minor( $requoted['order'], $coupon->get_code() );
+        if ( null === $discount ) {
+            return FD_UCP_Error::response( 'coupon_invalid', 'Coupon could not be applied to the order', 422 );
+        }
+
+        $this->update_session_row( $session['id'], $requoted['updates'] );
+
+        return new WP_REST_Response( array(
+            'ucp'               => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
+            'id'                => $session['id'],
+            'totals'            => json_decode( $requoted['updates']['totals'], true ),
+            'promotion_applied' => array(
+                'code'          => $coupon->get_code(),
+                'discount_type' => $coupon->get_discount_type(),
+                'amount'        => $coupon->get_amount(),
+                'discount'      => $discount,
+            ),
+        ), 200 );
+    }
+
+    private function writable_session( WP_REST_Request $request ): array|WP_REST_Response {
+        $session = $this->load_session( (string) $request->get_param( 'id' ) );
+        if ( ! $session ) {
+            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
+        }
+
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
+        }
+
+        $ownership = $this->verify_ownership( $request, $session );
+        if ( is_wp_error( $ownership ) ) {
+            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+        }
+
+        if ( in_array( $session['status'], self::FROZEN_STATUSES, true ) ) {
+            return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
+        }
+
+        return $session;
+    }
+
+    private function requote( array $session, array $updates, array $line_items, ?array $buyer, ?array $fulfillment, ?string $coupon = null ): array|WP_Error {
+        $quote = $this->quote(
+            $line_items,
+            $buyer,
             $fulfillment,
-            empty( $session['wc_order_id'] ) ? null : ( wc_get_order( (int) $session['wc_order_id'] ) ?: null )
+            empty( $session['wc_order_id'] ) ? null : ( wc_get_order( (int) $session['wc_order_id'] ) ?: null ),
+            $coupon
         );
         if ( is_wp_error( $quote ) ) {
-            return FD_UCP_Error::response( $quote->get_error_code(), $quote->get_error_message(), 422 );
+            return $quote;
         }
         $new_totals_array       = $quote['totals'];
         $updates['totals']      = wp_json_encode( $new_totals_array );
@@ -300,13 +389,10 @@ class FD_UCP_Checkout_Controller {
         }
 
         $updates['updated_at'] = current_time( 'mysql', true );
-        $this->update_session_row( $session['id'], $updates );
 
-        $session = $this->load_session( $session['id'] );
-
-        return new WP_REST_Response(
-            FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
-            200
+        return array(
+            'updates' => $updates,
+            'order'   => $quote['order'],
         );
     }
 
@@ -428,12 +514,17 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'order_not_payable', 'The order for this checkout no longer accepts payment', 409 );
         }
 
-        $this->sync_wc_order(
+        $rejected = $this->sync_wc_order(
             $order,
             $line_items,
             json_decode( $session['buyer'] ?? 'null', true ),
-            json_decode( $session['fulfillment'] ?? 'null', true )
+            json_decode( $session['fulfillment'] ?? 'null', true ),
+            $order->get_coupon_codes()
         );
+        if ( $rejected ) {
+            $this->update_session_row( $session['id'], array( 'wc_order_id' => $order->get_id() ) );
+            return FD_UCP_Error::response( 'coupon_invalid', 'A coupon no longer applies, update the session to get a new quote. ' . implode( ' ', $rejected ), 409 );
+        }
 
         $quoted_total = FD_UCP_Checkout_Pricing::total_of( json_decode( $session['totals'] ?? 'null', true ) );
         $mismatch     = FD_UCP_Checkout_Pricing::amount_mismatch( array(
@@ -557,7 +648,7 @@ class FD_UCP_Checkout_Controller {
     // Helpers
     // =========================================================================
 
-    private function quote( array $line_items, ?array $buyer, ?array $fulfillment, ?WC_Order $order ): array|WP_Error {
+    private function quote( array $line_items, ?array $buyer, ?array $fulfillment, ?WC_Order $order, ?string $coupon = null ): array|WP_Error {
         $untaxed = FD_UCP_Checkout_Pricing::priced_totals(
             FD_UCP_Checkout_Pricing::subtotal_of( $line_items ),
             FD_UCP_Checkout_Pricing::selected_shipping_cost( $fulfillment )
@@ -573,10 +664,17 @@ class FD_UCP_Checkout_Controller {
             return new WP_Error( 'order_creation_failed', $order->get_error_message() );
         }
 
-        $this->sync_wc_order( $order, $line_items, $buyer, $fulfillment );
+        $held     = $order->get_coupon_codes();
+        $codes    = null === $coupon ? $held : array_values( array_unique( array_merge( $held, array( $coupon ) ) ) );
+        $rejected = $this->sync_wc_order( $order, $line_items, $buyer, $fulfillment, $codes );
 
-        $totals = FD_UCP_Checkout_Pricing::order_totals( $order );
+        $totals = null !== $coupon && isset( $rejected[ $coupon ] )
+            ? new WP_Error( 'coupon_invalid', $rejected[ $coupon ] )
+            : FD_UCP_Checkout_Pricing::order_totals( $order );
         if ( is_wp_error( $totals ) ) {
+            if ( null !== $coupon ) {
+                $this->sync_wc_order( $order, $line_items, $buyer, $fulfillment, $held );
+            }
             return $totals;
         }
 
@@ -604,7 +702,7 @@ class FD_UCP_Checkout_Controller {
         return $order;
     }
 
-    private function sync_wc_order( WC_Order $order, array $line_items, ?array $buyer, ?array $fulfillment ): void {
+    private function sync_wc_order( WC_Order $order, array $line_items, ?array $buyer, ?array $fulfillment, array $coupon_codes ): array {
         if ( ! empty( $buyer['email'] ) ) {
             $order->set_billing_email( $buyer['email'] );
         }
@@ -617,6 +715,7 @@ class FD_UCP_Checkout_Controller {
             $order->set_shipping_last_name( $buyer['last_name'] );
         }
 
+        $order->remove_order_items( 'coupon' );
         $order->remove_order_items( 'line_item' );
         foreach ( $line_items as $li ) {
             $order->add_product( wc_get_product( (int) $li['item']['id'] ), $li['quantity'] );
@@ -655,7 +754,29 @@ class FD_UCP_Checkout_Controller {
         }
 
         $order->calculate_totals();
+
+        $rejected  = array();
+        $accepted  = array();
+        $discounts = new WC_Discounts( $order );
+        foreach ( $coupon_codes as $code ) {
+            $coupon = new WC_Coupon( $code );
+            $reason = FD_UCP_Coupon_Rules::rejection( $coupon, $discounts, (string) $order->get_billing_email(), $accepted );
+            if ( null !== $reason ) {
+                $rejected[ $code ] = $reason;
+                continue;
+            }
+            $item = new WC_Order_Item_Coupon();
+            $item->set_code( $coupon->get_code() );
+            $order->add_item( $item );
+            $accepted[] = $coupon;
+        }
+
         $order->save();
+        if ( $accepted ) {
+            $order->recalculate_coupons();
+        }
+
+        return $rejected;
     }
 
     private function transaction_conflict( string $checkout_id, array $settle_result ): ?string {
