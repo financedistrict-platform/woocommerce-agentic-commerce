@@ -200,6 +200,20 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
+        $requirement   = $verified['payment_requirements'];
+        $authorization = $verified['payment_payload']['payload']['authorization'];
+        $claimed       = FD_Payment_Claims::claim(
+            FD_Payment_Claims::KIND_AUTHORIZATION,
+            FD_Payment_Claims::authorization_value( $requirement['network'], $requirement['asset'], $authorization['from'], $authorization['nonce'] ),
+            (string) ( $input['checkout_id'] ?? '' )
+        );
+        if ( ! $claimed ) {
+            return array(
+                'success' => false,
+                'error'   => 'This signed payment cannot be used for this checkout',
+            );
+        }
+
         $result = $this->client->settle(
             $verified['x402_version'],
             $verified['payment_payload'],
@@ -224,7 +238,6 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $requirement   = $verified['payment_requirements'];
         $settled_payer = $result['payer'] ?? '';
 
         return array(

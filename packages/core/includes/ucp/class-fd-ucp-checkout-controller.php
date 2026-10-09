@@ -471,11 +471,12 @@ class FD_UCP_Checkout_Controller {
 
         $this->record_settlement( $order, $session, $result, $handler_id );
 
+        $conflict = $this->transaction_conflict( $session['id'], $result );
         $mismatch = FD_UCP_Checkout_Pricing::amount_mismatch( array(
             'quote'   => $quoted_total,
             'order'   => FD_UCP_Formatter::to_minor( (float) $order->get_total() ),
             'settled' => $result['settled_amount'] ?? null,
-        ) );
+        ) ) ?? $conflict;
         if ( null !== $mismatch ) {
             $order->update_status( 'on-hold', "Payment held for review. $mismatch" );
             $this->update_session_row( $session['id'], array(
@@ -655,6 +656,17 @@ class FD_UCP_Checkout_Controller {
 
         $order->calculate_totals();
         $order->save();
+    }
+
+    private function transaction_conflict( string $checkout_id, array $settle_result ): ?string {
+        $tx_ref = $settle_result['transaction_reference'] ?? null;
+        if ( ! is_string( $tx_ref ) || '' === $tx_ref ) {
+            return 'The settlement has no transaction reference';
+        }
+        if ( ! FD_Payment_Claims::claim( FD_Payment_Claims::KIND_TRANSACTION, $tx_ref, $checkout_id ) ) {
+            return 'The transaction reference is already used by another checkout';
+        }
+        return null;
     }
 
     private function record_settlement( WC_Order $order, array $session, array $settle_result, string $handler_id ): void {

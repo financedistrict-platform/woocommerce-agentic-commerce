@@ -573,6 +573,7 @@ final class FD_Test_Wpdb {
     public array $updates  = array();
     public array $calls    = array();
     public array $held     = array();
+    public array $claims   = array();
 
     public function get_charset_collate(): string {
         return '';
@@ -584,6 +585,10 @@ final class FD_Test_Wpdb {
 
     public function get_var( string $query ) {
         $this->calls[] = $query;
+        if ( false !== strpos( $query, 'fd_ucp_payment_claims' ) ) {
+            preg_match( "/claim_key = '([0-9a-f]+)'/", $query, $m );
+            return $this->claims[ $m[1] ?? '' ] ?? null;
+        }
         foreach ( $this->held as $name ) {
             if ( false !== strpos( $query, "GET_LOCK('" . $name . "'" ) ) {
                 return '0';
@@ -610,6 +615,15 @@ final class FD_Test_Wpdb {
         if ( isset( $rows[ $where['id'] ] ) ) {
             $rows[ $where['id'] ] = array_merge( $rows[ $where['id'] ], $data );
         }
+        return 1;
+    }
+
+    public function query( string $query ): int|false {
+        preg_match( "/VALUES \('([0-9a-f]+)', '[^']*', '([^']*)'/", $query, $m );
+        if ( isset( $this->claims[ $m[1] ] ) ) {
+            return 0;
+        }
+        $this->claims[ $m[1] ] = $m[2];
         return 1;
     }
 

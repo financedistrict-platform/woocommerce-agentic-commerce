@@ -15,7 +15,11 @@ final class PrismTamperTest extends TestCase {
     private const AMOUNT       = '100010';
     private const NONCE        = '0x' . 'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12';
 
+    private FD_Test_Claims_Wpdb $db;
+
     protected function setUp(): void {
+        $this->db        = new FD_Test_Claims_Wpdb();
+        $GLOBALS['wpdb'] = $this->db;
         $GLOBALS['fd_test_requests']      = array();
         $GLOBALS['fd_test_http_response'] = array(
             'response' => array( 'code' => 200 ),
@@ -73,9 +77,9 @@ final class PrismTamperTest extends TestCase {
         );
     }
 
-    private function settle( $credential ): array {
+    private function settle( $credential, string $checkout_id = 'c1' ): array {
         return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
-            'checkout_id'   => 'c1',
+            'checkout_id'   => $checkout_id,
             'credential'    => $credential,
             'checkout_meta' => self::meta(),
         ) );
@@ -330,5 +334,73 @@ final class PrismTamperTest extends TestCase {
         $this->assertArrayNotHasKey( 'redirect', $result );
         $this->assertCount( 1, $GLOBALS['fd_test_notices'] );
         $this->assertSame( 'error', $GLOBALS['fd_test_notices'][0]['type'] );
+    }
+
+    public function test_one_signed_authorization_settles_only_one_checkout_session(): void {
+        $credential = self::credential();
+
+        $first  = $this->settle( $credential, 'c1' );
+        $second = $this->settle( $credential, 'c2' );
+
+        $this->assertTrue( $first['success'] );
+        $this->assertFalse( $second['success'] );
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_same_session_may_retry_its_own_authorization(): void {
+        $credential = self::credential();
+
+        $first  = $this->settle( $credential );
+        $second = $this->settle( $credential );
+
+        $this->assertTrue( $first['success'] );
+        $this->assertTrue( $second['success'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_authorization_is_claimed_before_prism_is_called(): void {
+        $GLOBALS['fd_test_http_response'] = array( 'response' => array( 'code' => 500 ), 'body' => '' );
+        $credential                       = self::credential();
+
+        $failed = $this->settle( $credential, 'c1' );
+        $GLOBALS['fd_test_requests'] = array();
+        $other  = $this->settle( $credential, 'c2' );
+
+        $this->assertFalse( $failed['success'] );
+        $this->assertFalse( $other['success'] );
+        $this->assertSame( array(), $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_claim_ignores_the_case_of_payer_and_nonce(): void {
+        $first                                                       = self::credential();
+        $second                                                      = self::credential();
+        $second['paymentPayload']['payload']['authorization']['from']  = strtolower( self::PAYER );
+        $second['paymentPayload']['payload']['authorization']['nonce'] = '0x' . substr( strtoupper( self::NONCE ), 2 );
+
+        $this->settle( $first, 'c1' );
+        $GLOBALS['fd_test_requests'] = array();
+
+        $result = $this->settle( $second, 'c2' );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public function test_a_fresh_nonce_settles_on_another_session(): void {
+        $other                                                         = self::credential();
+        $other['paymentPayload']['payload']['authorization']['nonce'] = '0x' . str_repeat( '12', 32 );
+
+        $this->settle( self::credential(), 'c1' );
+        $result = $this->settle( $other, 'c2' );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_unavailable_claim_store_rejects_before_settle(): void {
+        $this->db->broken = true;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertRejectedBeforeSettle( $result );
     }
 }

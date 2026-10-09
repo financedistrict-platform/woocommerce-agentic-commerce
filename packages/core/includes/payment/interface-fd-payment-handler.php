@@ -26,10 +26,12 @@ interface FD_Payment_Handler {
     public function prepare_checkout_payment( array $input ): ?array;
 
     /**
-     * Settle a payment using the agent's credential.
+     * Settle a payment using the agent's credential. Implementations should record the credential
+     * with FD_Payment_Claims before contacting the gateway so one credential cannot settle two checkouts.
      * Returns [
      *   'success' => bool,
-     *   'transaction_reference' => ?string,
+     *   'transaction_reference' => string (required; an empty or reused value puts the order on hold),
+     *   'settled_amount' => int,
      *   'network' => ?string,
      *   'payment_method' => ?string,
      *   'payment_method_title' => ?string,
