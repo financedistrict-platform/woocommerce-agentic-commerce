@@ -4,6 +4,7 @@ defined( 'ABSPATH' ) || exit;
 class FD_UCP_Cart_Controller {
 
 	private const NAMESPACE = 'fd-ucp/v1';
+	private const LIFETIME  = 6 * HOUR_IN_SECONDS;
 
 	public function register_routes(): void {
 		register_rest_route( self::NAMESPACE, '/carts', array(
@@ -52,36 +53,11 @@ class FD_UCP_Cart_Controller {
 		$cart_id  = wp_generate_uuid4();
 		$currency = get_woocommerce_currency();
 
-		$formatted_items = array();
-		$cart_subtotal   = 0;
-
-		foreach ( $line_items as $item ) {
-			$product_id = (int) ( $item['item']['id'] ?? 0 );
-			$quantity   = max( 1, (int) ( $item['quantity'] ?? 1 ) );
-			$product    = wc_get_product( $product_id );
-
-			if ( ! $product || ! $product->is_purchasable() ) {
-				return FD_UCP_Error::response( 'invalid_product', "Product $product_id not found or not purchasable", 422 );
-			}
-
-			$price      = FD_UCP_Formatter::to_minor( (float) $product->get_price() );
-			$item_total = $price * $quantity;
-			$cart_subtotal += $item_total;
-
-			$formatted_items[] = array(
-				'id'       => 'li_' . ( count( $formatted_items ) + 1 ),
-				'item'     => array(
-					'id'    => (string) $product_id,
-					'title' => $product->get_name(),
-					'price' => $price,
-				),
-				'quantity' => $quantity,
-				'totals'   => array(
-					array( 'type' => 'subtotal', 'amount' => $item_total ),
-					array( 'type' => 'total', 'amount' => $item_total ),
-				),
-			);
+		$formatted_items = FD_UCP_Checkout_Pricing::catalog_line_items( $line_items, false );
+		if ( is_wp_error( $formatted_items ) ) {
+			return FD_UCP_Error::response( $formatted_items->get_error_code(), $formatted_items->get_error_message(), 422 );
 		}
+		$cart_subtotal = FD_UCP_Checkout_Pricing::subtotal_of( $formatted_items );
 
 		$token = FD_UCP_Session_Token::issue();
 		$now   = current_time( 'mysql', true );
@@ -92,6 +68,7 @@ class FD_UCP_Cart_Controller {
 			'ucp_version'        => FD_UCP_Request_Context::current()->session_pin(),
 			'created_at'         => $now,
 			'updated_at'         => $now,
+			'expires_at'         => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
 		) );
 
 		return FD_UCP_Session_Token::hand_over(
@@ -120,11 +97,13 @@ class FD_UCP_Cart_Controller {
 			return $pin;
 		}
 
-		$line_items    = json_decode( $cart['line_items'], true );
-		$cart_subtotal = $this->sum_subtotals( $line_items );
+		$line_items = $this->current_line_items( $cart );
+		if ( is_wp_error( $line_items ) ) {
+			return FD_UCP_Error::response( $line_items->get_error_code(), $line_items->get_error_message(), 422 );
+		}
 
 		return new WP_REST_Response(
-			$this->format_cart_response( $cart['id'], $line_items, $cart_subtotal, get_woocommerce_currency() ),
+			$this->format_cart_response( $cart['id'], $line_items, FD_UCP_Checkout_Pricing::subtotal_of( $line_items ), get_woocommerce_currency() ),
 			200
 		);
 	}
@@ -157,36 +136,11 @@ class FD_UCP_Cart_Controller {
 		}
 
 		$currency        = get_woocommerce_currency();
-		$formatted_items = array();
-		$cart_subtotal   = 0;
-
-		foreach ( $line_items as $item ) {
-			$product_id = (int) ( $item['item']['id'] ?? 0 );
-			$quantity   = max( 1, (int) ( $item['quantity'] ?? 1 ) );
-			$product    = wc_get_product( $product_id );
-
-			if ( ! $product || ! $product->is_purchasable() ) {
-				return FD_UCP_Error::response( 'invalid_product', "Product $product_id not found or not purchasable", 422 );
-			}
-
-			$price      = FD_UCP_Formatter::to_minor( (float) $product->get_price() );
-			$item_total = $price * $quantity;
-			$cart_subtotal += $item_total;
-
-			$formatted_items[] = array(
-				'id'       => 'li_' . ( count( $formatted_items ) + 1 ),
-				'item'     => array(
-					'id'    => (string) $product_id,
-					'title' => $product->get_name(),
-					'price' => $price,
-				),
-				'quantity' => $quantity,
-				'totals'   => array(
-					array( 'type' => 'subtotal', 'amount' => $item_total ),
-					array( 'type' => 'total', 'amount' => $item_total ),
-				),
-			);
+		$formatted_items = FD_UCP_Checkout_Pricing::catalog_line_items( $line_items, false );
+		if ( is_wp_error( $formatted_items ) ) {
+			return FD_UCP_Error::response( $formatted_items->get_error_code(), $formatted_items->get_error_message(), 422 );
 		}
+		$cart_subtotal = FD_UCP_Checkout_Pricing::subtotal_of( $formatted_items );
 
 		$this->update_cart_row( $cart['id'], array(
 			'line_items' => wp_json_encode( $formatted_items ),
@@ -219,15 +173,18 @@ class FD_UCP_Cart_Controller {
 			return $pin;
 		}
 
-		$line_items    = json_decode( $cart['line_items'], true );
-		$currency      = get_woocommerce_currency();
-		$session_id    = wp_generate_uuid4();
-		$cart_subtotal = $this->sum_subtotals( $line_items );
+		$line_items = $this->current_line_items( $cart );
+		if ( is_wp_error( $line_items ) ) {
+			return FD_UCP_Error::response( $line_items->get_error_code(), $line_items->get_error_message(), 422 );
+		}
 
-		$totals = array(
-			array( 'type' => 'subtotal', 'amount' => $cart_subtotal ),
-			array( 'type' => 'total', 'amount' => $cart_subtotal ),
-		);
+		$totals = FD_UCP_Checkout_Pricing::priced_totals( FD_UCP_Checkout_Pricing::subtotal_of( $line_items ), 0 );
+		if ( is_wp_error( $totals ) ) {
+			return FD_UCP_Error::response( $totals->get_error_code(), $totals->get_error_message(), 422 );
+		}
+
+		$currency   = get_woocommerce_currency();
+		$session_id = wp_generate_uuid4();
 
 		$now = current_time( 'mysql', true );
 
@@ -237,7 +194,7 @@ class FD_UCP_Cart_Controller {
 			'id'                => $session_id,
 			'status'            => 'incomplete',
 			'currency'          => $currency,
-			'line_items'        => $cart['line_items'],
+			'line_items'        => wp_json_encode( $line_items ),
 			'totals'            => wp_json_encode( $totals ),
 			'buyer'             => null,
 			'fulfillment'       => null,
@@ -302,16 +259,8 @@ class FD_UCP_Cart_Controller {
 		);
 	}
 
-	private function sum_subtotals( array $line_items ): int {
-		$total = 0;
-		foreach ( $line_items as $li ) {
-			foreach ( $li['totals'] ?? array() as $t ) {
-				if ( 'subtotal' === $t['type'] ) {
-					$total += (int) $t['amount'];
-				}
-			}
-		}
-		return $total;
+	private function current_line_items( array $cart ): array|WP_Error {
+		return FD_UCP_Checkout_Pricing::catalog_line_items( json_decode( $cart['line_items'] ?? '[]', true ) ?: array(), true );
 	}
 
 	private function verify_cart_ownership( WP_REST_Request $request, array $cart ): true|WP_Error {
@@ -338,7 +287,17 @@ class FD_UCP_Cart_Controller {
 			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fd_ucp_carts WHERE id = %s", $id ),
 			ARRAY_A
 		);
-		return $row ?: null;
+		if ( ! $row ) {
+			return null;
+		}
+
+		$expires_at = strtotime( (string) ( $row['expires_at'] ?? '' ) );
+		if ( false === $expires_at || $expires_at < time() ) {
+			$this->delete_cart_row( $id );
+			return null;
+		}
+
+		return $row;
 	}
 
 	private function update_cart_row( string $id, array $data ): void {

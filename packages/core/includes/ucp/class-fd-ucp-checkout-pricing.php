@@ -28,6 +28,39 @@ final class FD_UCP_Checkout_Pricing {
         return $totals;
     }
 
+    public static function catalog_line_items( array $items, bool $keep_ids ): array|WP_Error {
+        $priced = array();
+
+        foreach ( $items as $item ) {
+            $product_id = (int) ( $item['item']['id'] ?? 0 );
+            $quantity   = max( 1, (int) ( $item['quantity'] ?? 1 ) );
+            $product    = wc_get_product( $product_id );
+
+            if ( ! $product || ! $product->is_purchasable() ) {
+                return new WP_Error( 'invalid_product', "Product $product_id not found or not purchasable" );
+            }
+
+            $price      = FD_UCP_Formatter::to_minor( (float) $product->get_price() );
+            $item_total = $price * $quantity;
+
+            $priced[] = array(
+                'id'       => $keep_ids && ! empty( $item['id'] ) ? $item['id'] : 'li_' . ( count( $priced ) + 1 ),
+                'item'     => array(
+                    'id'    => (string) $product_id,
+                    'title' => $product->get_name(),
+                    'price' => $price,
+                ),
+                'quantity' => $quantity,
+                'totals'   => array(
+                    array( 'type' => 'subtotal', 'amount' => $item_total ),
+                    array( 'type' => 'total', 'amount' => $item_total ),
+                ),
+            );
+        }
+
+        return $priced;
+    }
+
     public static function order_totals( WC_Order $order ): array|WP_Error {
         $totals = self::priced_totals(
             FD_UCP_Formatter::to_minor( (float) $order->get_subtotal() ),
