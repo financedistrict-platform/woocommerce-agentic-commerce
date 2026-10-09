@@ -29,6 +29,7 @@ final class FD_Test_WP {
         self::$live_http     = false;
         self::$environment   = 'production';
         FD_UCP_Request_Context::set( null );
+        WC_Admin_Settings::reset();
     }
 
     public static function hook_count( string $tag ): int {
@@ -264,6 +265,36 @@ function esc_html__( string $text, string $domain = '' ): string {
 
 function __( string $text, string $domain = '' ): string {
     return $text;
+}
+
+function esc_attr( string $text ): string {
+    return htmlspecialchars( $text, ENT_QUOTES );
+}
+
+function esc_attr__( string $text, string $domain = '' ): string {
+    return esc_attr( $text );
+}
+
+function wp_unslash( $value ) {
+    return is_array( $value ) ? array_map( 'wp_unslash', $value ) : stripslashes( (string) $value );
+}
+
+final class WC_Admin_Settings {
+    public static array $messages = array();
+    public static array $errors   = array();
+
+    public static function add_message( string $text ): void {
+        self::$messages[] = $text;
+    }
+
+    public static function add_error( string $text ): void {
+        self::$errors[] = $text;
+    }
+
+    public static function reset(): void {
+        self::$messages = array();
+        self::$errors   = array();
+    }
 }
 
 function wc_get_product( $id ) {
