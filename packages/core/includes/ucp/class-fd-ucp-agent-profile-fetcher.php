@@ -32,6 +32,19 @@ class FD_UCP_Agent_Profile_Fetcher {
         return $result;
     }
 
+    public function refresh( string $url ): array {
+        if ( $this->fetched ) {
+            return $this->lookup( $url );
+        }
+        $this->fetched = true;
+
+        $result = $this->fetch( $url );
+        if ( empty( $result['failed'] ) ) {
+            wp_cache_set( md5( $url ), $result, self::CACHE_GROUP, self::CACHE_TTL );
+        }
+        return $result;
+    }
+
     private function fetch( string $url ): array {
         $target = $this->validated_target( $url );
         if ( null === $target ) {
@@ -65,8 +78,10 @@ class FD_UCP_Agent_Profile_Fetcher {
         }
 
         $version = $profile['ucp']['version'] ?? null;
+        $keys    = $profile['keys'] ?? array();
         return array(
             'version'    => is_string( $version ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $version ) ? $version : null,
+            'keys'       => is_array( $keys ) ? array_values( array_filter( $keys, 'is_array' ) ) : array(),
             'fetched_at' => time(),
         );
     }
