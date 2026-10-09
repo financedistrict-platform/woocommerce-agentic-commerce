@@ -9,13 +9,18 @@ PASS=0
 FAIL=0
 SKIP=0
 
+HDRS=$(mktemp)
+trap 'rm -f "$HDRS"' EXIT
+SESSION_TOKEN=""
+
 ucp_curl() {
-  if [ -n "$UCP_AGENT_PROFILE" ]; then
-    curl -H "UCP-Agent: profile=\"$UCP_AGENT_PROFILE\"" "$@"
-  else
-    curl "$@"
-  fi
+  local headers=()
+  [ -n "$UCP_AGENT_PROFILE" ] && headers+=(-H "UCP-Agent: profile=\"$UCP_AGENT_PROFILE\"")
+  [ -n "$SESSION_TOKEN" ] && headers+=(-H "UCP-Session-Token: $SESSION_TOKEN")
+  curl "${headers[@]}" "$@"
 }
+
+issued_token() { tr -d '\r' < "$HDRS" | awk -F': ' 'tolower($1)=="ucp-session-token"{print $2}'; }
 
 json_get() { python3 -c "import json,sys; d=json.load(sys.stdin); $1" 2>/dev/null || true; }
 
@@ -105,9 +110,11 @@ echo ""
 
 echo "3. Cart"
 if has_cap dev.ucp.shopping.cart; then
-  CART_RESP=$(ucp_curl -s -X POST "$UCP_API/carts" \
+  CART_RESP=$(ucp_curl -s -D "$HDRS" -X POST "$UCP_API/carts" \
     -H "Content-Type: application/json" \
     -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
+  SESSION_TOKEN=$(issued_token)
+  assert_not_empty "cart issues a session token" "$SESSION_TOKEN"
   CART_ID=$(echo "$CART_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
   assert_not_empty "create cart" "$CART_ID"
 
@@ -138,15 +145,20 @@ echo ""
 # ── 4. Checkout Session (fresh) ───────────────────────────────
 
 echo "4. Checkout Session"
-CREATE=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions" \
+CREATE=$(ucp_curl -s -D "$HDRS" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
+SESSION_TOKEN=$(issued_token)
+assert_not_empty "checkout session issues a session token" "$SESSION_TOKEN"
 SESSION_ID=$(echo "$CREATE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
 assert_not_empty "create checkout session" "$SESSION_ID"
 
 GET_SESS=$(ucp_curl -s "$UCP_API/checkout-sessions/$SESSION_ID")
 SESS_STATUS=$(echo "$GET_SESS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
 assert_status "session status is incomplete" "incomplete" "$SESS_STATUS"
+
+FOREIGN_GET=$(SESSION_TOKEN="" ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/checkout-sessions/$SESSION_ID")
+assert_status "session without its token is refused" "403" "$FOREIGN_GET"
 echo ""
 
 # ── 5. Buyer Identity ────────────────────────────────────────
@@ -188,9 +200,10 @@ echo ""
 
 echo "8. Cart Delete"
 if has_cap dev.ucp.shopping.cart; then
-  CART2_RESP=$(ucp_curl -s -X POST "$UCP_API/carts" \
+  CART2_RESP=$(ucp_curl -s -D "$HDRS" -X POST "$UCP_API/carts" \
     -H "Content-Type: application/json" \
     -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
+  SESSION_TOKEN=$(issued_token)
   CART2_ID=$(echo "$CART2_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
   assert_not_empty "create cart for delete test" "$CART2_ID"
 

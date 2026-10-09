@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 define( 'FD_UCP_VERSION', '0.3.10' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'FD_UCP_DB_VERSION', '1.2.0' );
+define( 'FD_UCP_DB_VERSION', '1.3.0' );
 
 require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-registry.php';
 require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-installer.php';
@@ -64,6 +64,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-agent-profile-fetcher.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-resolver.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-error.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-session-token.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-address.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-status.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-formatter.php';

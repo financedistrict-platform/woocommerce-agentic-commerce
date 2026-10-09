@@ -6,7 +6,9 @@ PRODUCT_ID="${1:-14}"
 QUANTITY="${2:-1}"
 
 echo "=== Create Checkout Session (product $PRODUCT_ID x$QUANTITY) ==="
-RESPONSE=$(curl -s -X POST "$UCP_API/checkout-sessions" \
+HDRS=$(mktemp)
+trap 'rm -f "$HDRS"' EXIT
+RESPONSE=$(curl -s -D "$HDRS" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": $QUANTITY}]}")
 
@@ -17,4 +19,6 @@ if [ -n "$SESSION_ID" ]; then
   echo ""
   echo "Session ID: $SESSION_ID"
   echo "Export it:  export SESSION_ID=$SESSION_ID"
+  TOKEN=$(tr -d '\r' < "$HDRS" | awk -F': ' 'tolower($1)=="ucp-session-token"{print $2}')
+  echo "Token:      export SESSION_TOKEN=$TOKEN"
 fi

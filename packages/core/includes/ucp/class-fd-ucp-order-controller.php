@@ -20,12 +20,14 @@ class FD_UCP_Order_Controller {
     }
 
     public function list_orders( WP_REST_Request $request ): WP_REST_Response {
-        $agent      = $request->get_header( 'ucp-agent' ) ?? '';
-        $fingerprint = hash( 'sha256', $agent );
-        $limit      = min( (int) ( $request->get_param( 'limit' ) ?? 20 ), 50 );
-        $offset     = max( (int) ( $request->get_param( 'offset' ) ?? 0 ), 0 );
+        $token_hash = FD_UCP_Session_Token::presented_hash( $request );
+        if ( null === $token_hash ) {
+            return FD_UCP_Error::response( 'session_token_required', 'A UCP-Session-Token header is required to list orders', 401 );
+        }
+        $limit  = min( (int) ( $request->get_param( 'limit' ) ?? 20 ), 50 );
+        $offset = max( (int) ( $request->get_param( 'offset' ) ?? 0 ), 0 );
 
-        // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- filtering UCP orders by agent fingerprint
+        // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- filtering UCP orders by session token hash
         $orders = wc_get_orders( array(
             'limit'      => $limit,
             'offset'     => $offset,
@@ -37,8 +39,8 @@ class FD_UCP_Order_Controller {
                     'compare' => 'EXISTS',
                 ),
                 array(
-                    'key'   => '_fd_ucp_agent_fingerprint',
-                    'value' => $fingerprint,
+                    'key'   => FD_UCP_Session_Token::ORDER_META,
+                    'value' => $token_hash,
                 ),
             ),
         ) );
@@ -78,13 +80,8 @@ class FD_UCP_Order_Controller {
             return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 
-        $fingerprint = $order->get_meta( '_fd_ucp_agent_fingerprint' );
-        if ( $fingerprint ) {
-            $agent = $request->get_header( 'ucp-agent' ) ?? '';
-            $request_fp = hash( 'sha256', $agent );
-            if ( ! hash_equals( $fingerprint, $request_fp ) ) {
-                return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
-            }
+        if ( ! FD_UCP_Session_Token::owns_order( $request, $order ) ) {
+            return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 
         return new WP_REST_Response(

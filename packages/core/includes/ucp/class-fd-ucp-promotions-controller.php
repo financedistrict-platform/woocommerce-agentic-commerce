@@ -160,14 +160,8 @@ class FD_UCP_Promotions_Controller {
 	}
 
 	private function verify_ownership( WP_REST_Request $request, array $session ): true|WP_Error {
-		$stored = $session['agent_fingerprint'] ?? '';
-		if ( empty( $stored ) ) {
-			return true;
-		}
-		$agent   = $request->get_header( 'ucp-agent' ) ?? '';
-		$current = hash( 'sha256', $agent );
-		if ( ! hash_equals( $stored, $current ) ) {
-			return new WP_Error( 'session_ownership', 'Session belongs to a different agent' );
+		if ( ! FD_UCP_Session_Token::owns_row( $request, $session ) ) {
+			return new WP_Error( 'session_ownership', 'A valid UCP-Session-Token is required for this checkout session' );
 		}
 		return true;
 	}

@@ -83,19 +83,20 @@ class FD_UCP_Cart_Controller {
 			);
 		}
 
-		$now = current_time( 'mysql', true );
+		$token = FD_UCP_Session_Token::issue();
+		$now   = current_time( 'mysql', true );
 		$this->insert_cart( array(
-			'id'                => $cart_id,
-			'line_items'        => wp_json_encode( $formatted_items ),
-			'agent_fingerprint' => $this->compute_fingerprint( $request ),
-			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
-			'created_at'        => $now,
-			'updated_at'        => $now,
+			'id'                 => $cart_id,
+			'line_items'         => wp_json_encode( $formatted_items ),
+			'session_token_hash' => FD_UCP_Session_Token::hash( $token ),
+			'ucp_version'        => FD_UCP_Request_Context::current()->session_pin(),
+			'created_at'         => $now,
+			'updated_at'         => $now,
 		) );
 
-		return new WP_REST_Response(
-			$this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ),
-			201
+		return FD_UCP_Session_Token::hand_over(
+			new WP_REST_Response( $this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ), 201 ),
+			$token
 		);
 	}
 
@@ -241,7 +242,7 @@ class FD_UCP_Cart_Controller {
 			'buyer'             => null,
 			'fulfillment'       => null,
 			'payment_meta'      => null,
-			'agent_fingerprint' => $cart['agent_fingerprint'],
+			'session_token_hash' => $cart['session_token_hash'],
 			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
 			'created_at'        => $now,
 			'updated_at'        => $now,
@@ -314,20 +315,10 @@ class FD_UCP_Cart_Controller {
 	}
 
 	private function verify_cart_ownership( WP_REST_Request $request, array $cart ): true|WP_Error {
-		$stored = $cart['agent_fingerprint'] ?? '';
-		if ( empty( $stored ) ) {
-			return true;
-		}
-		$current = $this->compute_fingerprint( $request );
-		if ( ! hash_equals( $stored, $current ) ) {
-			return new WP_Error( 'cart_ownership', 'Cart belongs to a different agent' );
+		if ( ! FD_UCP_Session_Token::owns_row( $request, $cart ) ) {
+			return new WP_Error( 'cart_ownership', 'A valid UCP-Session-Token is required for this cart' );
 		}
 		return true;
-	}
-
-	private function compute_fingerprint( WP_REST_Request $request ): string {
-		$agent = $request->get_header( 'ucp-agent' ) ?? '';
-		return hash( 'sha256', $agent );
 	}
 
 	// =========================================================================
