@@ -560,7 +560,13 @@ class FD_UCP_Checkout_Controller {
                 'wc_order_id' => $order->get_id(),
                 'updated_at'  => current_time( 'mysql', true ),
             ) );
-            return FD_UCP_Error::response( 'payment_on_hold', 'Payment received but held for merchant review', 409 );
+            $session['status']      = 'requires_escalation';
+            $session['wc_order_id'] = $order->get_id();
+
+            return new WP_REST_Response(
+                FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+                200
+            );
         }
 
         $order->payment_complete( $result['transaction_reference'] ?? '' );

@@ -253,6 +253,10 @@ function wp_json_encode( $data, int $flags = 0 ) {
     return json_encode( $data, $flags );
 }
 
+function set_url_scheme( string $url, ?string $scheme = null ): string {
+    return preg_replace( '#^[a-z][a-z0-9+.-]*://#i', ( $scheme ?? 'https' ) . '://', $url );
+}
+
 function current_time( string $type, $gmt = 0 ): string {
     return '2026-04-20 10:07:00';
 }
@@ -675,6 +679,10 @@ class WC_Order {
 
     public function get_view_order_url(): string {
         return 'https://store.test/my-account/view-order/1001/';
+    }
+
+    public function get_checkout_order_received_url(): string {
+        return 'http://store.test/checkout/order-received/1001/?key=' . $this->order_key;
     }
 
     public function get_status(): string {

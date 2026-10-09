@@ -156,6 +156,21 @@ final class CheckoutTamperTest extends TestCase {
         return FD_Test_Order_Store::$orders[1001];
     }
 
+    private function assertHeld( WP_REST_Response $response ): void {
+        $data = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $data ) );
+        $this->assertSame( 'requires_escalation', $data['status'] );
+        $this->assertStringStartsWith( 'https://', $data['continue_url'] );
+        $this->assertStringContainsString( $this->order()->get_order_key(), $data['continue_url'] );
+        $hold = array_values( array_filter( $data['messages'], static fn( $m ) => 'payment_on_hold' === $m['code'] ) );
+        $this->assertCount( 1, $hold );
+        $this->assertSame( 'error', $hold[0]['type'] );
+        $this->assertSame( 'requires_buyer_review', $hold[0]['severity'] );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+        $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
     private function stored_totals( string $id = self::SESSION_ID ): array {
         return array_column( json_decode( $this->db->sessions[ $id ]['totals'], true ), 'amount', 'type' );
     }
@@ -532,8 +547,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
         $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
@@ -545,8 +559,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
@@ -557,8 +570,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
         $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
@@ -582,8 +594,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
         $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
@@ -605,8 +616,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
@@ -618,7 +628,21 @@ final class CheckoutTamperTest extends TestCase {
         $response = $this->complete();
 
         $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_requires_escalation', $response->get_data()['messages'][0]['code'] );
         $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_get_on_a_held_session_returns_the_hold_shape_to_its_owner_only(): void {
+        $this->db->sessions[ self::SESSION_ID ]['status'] = 'requires_escalation';
+        $this->order()->update_status( 'on-hold', 'held' );
+        $route = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID;
+
+        $owner = $this->controller()->get_session( self::request( $route, self::PLATFORM, array( 'id' => self::SESSION_ID ) ) );
+        $this->assertHeld( $owner );
+
+        $foreign = $this->controller()->get_session( self::request( $route, self::OTHER_PLATFORM, array( 'id' => self::SESSION_ID ) ) );
+        $this->assertSame( 404, $foreign->get_status(), json_encode( $foreign->get_data() ) );
+        $this->assertArrayNotHasKey( 'continue_url', $foreign->get_data() );
     }
 
     public function test_tax_inclusive_store_quotes_the_order_total_for_a_tax_free_destination(): void {
@@ -1448,7 +1472,7 @@ final class CheckoutTamperTest extends TestCase {
         $response = $this->promote( 'SAVE10' );
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => 420, 'total' => 4275 ), $this->stored_totals() );
+        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => -420, 'total' => 4275 ), $this->stored_totals() );
         $this->assertSame( array( 4275 ), $this->handler->prepared );
         $this->assertSame( 4275, json_decode( $this->db->sessions[ self::SESSION_ID ]['payment_meta'], true )[ $this->handler->id() ]['prepared_amount'] );
         $this->assertSame( array( 'SAVE10' ), $this->order()->get_coupon_codes() );
@@ -1479,7 +1503,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->complete();
 
-        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
     }
 
@@ -1508,7 +1532,7 @@ final class CheckoutTamperTest extends TestCase {
         $response = $this->promote( 'HUGE' );
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => 4200, 'total' => 495 ), $this->stored_totals() );
+        $this->assertSame( array( 'subtotal' => 4200, 'fulfillment' => 495, 'discount' => -4200, 'total' => 495 ), $this->stored_totals() );
         $this->assertSame( array( 495 ), $this->handler->prepared );
     }
 
@@ -1532,7 +1556,7 @@ final class CheckoutTamperTest extends TestCase {
         $response = $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) ) );
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => 180, 'total' => 2115 ), $this->stored_totals() );
+        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => -180, 'total' => 2115 ), $this->stored_totals() );
         $this->assertSame( array( 4275, 2115 ), $this->handler->prepared );
     }
 
@@ -1568,7 +1592,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 200, $this->update( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) ) )->get_status() );
         $this->assertSame( 200, $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) )->get_status() );
         $this->assertSame( 0, FD_Test_Coupon_Store::used( 'LAST' ) );
-        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => 180, 'total' => 2115 ), $this->stored_totals() );
+        $this->assertSame( array( 'subtotal' => 1800, 'fulfillment' => 495, 'discount' => -180, 'total' => 2115 ), $this->stored_totals() );
 
         $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 2115 );
         $response              = $this->complete();
@@ -1582,7 +1606,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->promote( 'SAVE10' );
         $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => 1 );
 
-        $this->assertSame( 409, $this->complete()->get_status() );
+        $this->assertHeld( $this->complete() );
         $this->assertSame( 0, FD_Test_Coupon_Store::used( 'SAVE10' ) );
     }
 

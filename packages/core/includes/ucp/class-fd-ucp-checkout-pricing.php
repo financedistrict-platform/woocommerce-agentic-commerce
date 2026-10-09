@@ -13,11 +13,11 @@ final class FD_UCP_Checkout_Pricing {
         if ( $tax < 0 || $subtotal < 0 || $tax > self::MAX_AMOUNT_MINOR || $subtotal > self::MAX_AMOUNT_MINOR ) {
             return new WP_Error( 'invalid_total', 'Checkout amounts are outside the payable range' );
         }
-        if ( $discount < 0 || $discount > $subtotal ) {
+        if ( $discount > 0 || -$discount > $subtotal ) {
             return new WP_Error( 'invalid_total', 'Checkout discount is outside the payable range' );
         }
 
-        $total = $subtotal - $discount + $shipping + $tax;
+        $total = $subtotal + $shipping + $tax + $discount;
         if ( $total <= 0 || $total > self::MAX_AMOUNT_MINOR ) {
             return new WP_Error( 'invalid_total', 'Checkout total must be greater than zero and within the payable range' );
         }
@@ -26,7 +26,7 @@ final class FD_UCP_Checkout_Pricing {
         if ( $shipping > 0 ) {
             $totals[] = array( 'type' => 'fulfillment', 'amount' => $shipping );
         }
-        if ( $discount > 0 ) {
+        if ( $discount < 0 ) {
             $totals[] = array( 'type' => 'discount', 'amount' => $discount );
         }
         if ( $tax > 0 ) {
@@ -102,7 +102,7 @@ final class FD_UCP_Checkout_Pricing {
             return new WP_Error( 'invalid_total', 'Order total is outside the payable range' );
         }
 
-        $totals = self::priced_totals( $subtotal, $shipping, $tax, $discount );
+        $totals = self::priced_totals( $subtotal, $shipping, $tax, -$discount );
         if ( is_wp_error( $totals ) ) {
             return $totals;
         }

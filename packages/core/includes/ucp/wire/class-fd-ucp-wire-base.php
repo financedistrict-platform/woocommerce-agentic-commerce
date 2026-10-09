@@ -39,6 +39,19 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
             'links'      => array(),
         );
 
+        if ( 'requires_escalation' === $status ) {
+            $response['messages'][] = array(
+                'type'     => 'error',
+                'code'     => 'payment_on_hold',
+                'content'  => 'Payment received but held for merchant review',
+                'severity' => 'requires_buyer_review',
+            );
+            $held = ! empty( $session['wc_order_id'] ) ? wc_get_order( (int) $session['wc_order_id'] ) : null;
+            if ( $held ) {
+                $response['continue_url'] = set_url_scheme( $held->get_checkout_order_received_url(), 'https' );
+            }
+        }
+
         if ( $buyer ) {
             $response['buyer'] = $buyer;
         }
