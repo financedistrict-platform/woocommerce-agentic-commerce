@@ -226,34 +226,91 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $tx_ref = $result['transaction'] ?? $result['transactionHash']
-            ?? $result['facilitatorTransactionId'] ?? $result['txHash'] ?? '';
-
-        $success = $result['success'] ?? ( ! empty( $tx_ref ) );
-
-        if ( ! $success ) {
+        $success = $result['success'] ?? null;
+        $tx_ref  = $this->transaction_reference( $result );
+        if ( true !== $success && ( false === $success || '' === $tx_ref ) ) {
+            $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'rejected' );
+            $reason = $result['error'] ?? $result['errorReason'] ?? $result['reason'] ?? null;
             return array(
                 'success' => false,
-                'error'   => $result['error'] ?? $result['errorReason'] ?? $result['reason'] ?? 'Settlement failed',
+                'error'   => is_string( $reason ) && '' !== $reason ? $reason : 'Settlement failed',
             );
         }
 
-        $settled_payer = $result['payer'] ?? '';
+        $hold = $this->settlement_discrepancy( $result, $requirement, $verified['payer'], $tx_ref );
+        if ( null !== $hold ) {
+            $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'held: ' . $hold );
+        }
 
-        return array(
+        $settled_payer = $result['payer'] ?? '';
+        $payer         = null === $hold && is_string( $settled_payer ) && '' !== $settled_payer ? $settled_payer : $verified['payer'];
+
+        $settlement = array(
             'success'               => true,
             'transaction_reference' => $tx_ref,
             'payment_method'        => 'fd_prism_x402',
             'payment_method_title'  => 'Prism Stablecoin',
             'network'               => $requirement['network'],
-            'settled_amount'        => $input['checkout_meta'][ self::HANDLER_ID ]['prepared_amount'] ?? null,
+            'settled_amount'        => null === $hold ? ( $input['checkout_meta'][ self::HANDLER_ID ]['prepared_amount'] ?? null ) : null,
             'order_meta'            => array(
                 '_fd_prism_tx_hash' => $tx_ref,
                 '_fd_prism_network' => $requirement['network'],
-                '_fd_prism_payer'   => is_string( $settled_payer ) && '' !== $settled_payer ? $settled_payer : $verified['payer'],
+                '_fd_prism_payer'   => $payer,
                 '_fd_prism_asset'   => $requirement['asset'],
                 '_fd_prism_amount'  => $verified['value'],
             ),
+        );
+        if ( null !== $hold ) {
+            $settlement['hold_reason'] = $hold;
+        }
+        return $settlement;
+    }
+
+    private function transaction_reference( array $result ): string {
+        foreach ( array( 'transaction', 'transactionHash', 'facilitatorTransactionId', 'txHash' ) as $field ) {
+            if ( is_string( $result[ $field ] ?? null ) && '' !== $result[ $field ] ) {
+                return $result[ $field ];
+            }
+        }
+        return '';
+    }
+
+    private function settlement_discrepancy( array $result, array $requirement, string $signed_payer, string $tx_ref ): ?string {
+        if ( true !== ( $result['success'] ?? null ) ) {
+            return 'Prism reported a transaction without confirming success';
+        }
+        if ( '' === $tx_ref ) {
+            return 'Prism settlement response has no transaction hash';
+        }
+        $network = $result['network'] ?? null;
+        if ( $network !== $requirement['network'] ) {
+            return 'Prism settlement network ' . self::describe( $network ) . ' differs from the stored ' . $requirement['network'];
+        }
+        $payer = $result['payer'] ?? null;
+        if ( null !== $payer
+            && '' !== $payer
+            && ( ! is_string( $payer ) || 0 !== strcasecmp( $payer, $signed_payer ) )
+        ) {
+            return 'Prism settlement payer ' . self::describe( $payer ) . ' differs from the signed ' . $signed_payer;
+        }
+        $amount = $result['amount'] ?? null;
+        if ( is_int( $amount ) ) {
+            $amount = (string) $amount;
+        }
+        if ( null !== $amount && $amount !== $requirement['amount'] ) {
+            return 'Prism settlement amount ' . self::describe( $amount ) . ' differs from the stored ' . $requirement['amount'];
+        }
+        return null;
+    }
+
+    private static function describe( $value ): string {
+        return is_string( $value ) ? $value : gettype( $value );
+    }
+
+    private function log_settlement_response( array $result, string $checkout_id, string $outcome ): void {
+        wc_get_logger()->error(
+            "Settlement response $outcome for checkout $checkout_id: " . substr( (string) wp_json_encode( $result ), 0, 500 ),
+            array( 'source' => 'fd-prism' )
         );
     }
 

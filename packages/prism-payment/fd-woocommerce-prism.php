@@ -38,6 +38,7 @@ function fd_prism_init() {
     $dir = plugin_dir_path(__FILE__);
     require_once $dir . 'includes/prism/class-fd-prism-client.php';
     require_once $dir . 'includes/prism/class-fd-prism-validator.php';
+    require_once $dir . 'includes/prism/class-fd-prism-tokens.php';
     require_once $dir . 'includes/prism/class-fd-prism-handler.php';
     require_once $dir . 'includes/prism/class-fd-prism-gateway.php';
     require_once $dir . 'includes/admin/class-fd-prism-order-meta-box.php';

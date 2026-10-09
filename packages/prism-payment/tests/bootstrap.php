@@ -206,6 +206,7 @@ $base = dirname( __DIR__ ) . '/includes';
 $core = dirname( __DIR__, 2 ) . '/core/includes';
 
 require_once $base . '/prism/class-fd-prism-validator.php';
+require_once $base . '/prism/class-fd-prism-tokens.php';
 require_once $core . '/payment/interface-fd-payment-handler.php';
 require_once $core . '/payment/interface-fd-versioned-payment-handler.php';
 require_once $core . '/payment/class-fd-payment-claims.php';

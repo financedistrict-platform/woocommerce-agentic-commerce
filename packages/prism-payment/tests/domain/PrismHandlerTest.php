@@ -514,7 +514,7 @@ final class PrismHandlerTest extends TestCase {
         $requirement = self::requirement( '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd', '100010' );
         $GLOBALS['fd_test_http_response'] = array(
             'response' => array( 'code' => 200 ),
-            'body'     => json_encode( array( 'success' => true, 'payer' => '', 'transaction' => '0xabc' ) ),
+            'body'     => json_encode( array( 'success' => true, 'payer' => '', 'transaction' => '0xabc', 'network' => 'eip155:84532' ) ),
         );
 
         $result = $this->handler()->settle_payment( array(

@@ -81,8 +81,14 @@ final class PrismTamperTest extends TestCase {
         return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
             'checkout_id'   => $checkout_id,
             'credential'    => $credential,
-            'checkout_meta' => self::meta(),
+            'checkout_meta' => self::quoted_meta(),
         ) );
+    }
+
+    private static function quoted_meta(): array {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['prepared_amount'] = 10001;
+        return $meta;
     }
 
     private static function settle_body(): array {
@@ -394,6 +400,122 @@ final class PrismTamperTest extends TestCase {
 
         $this->assertTrue( $result['success'] );
         $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    private function respond( array $body ): void {
+        $GLOBALS['fd_test_http_response'] = array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $body ) );
+    }
+
+    private static function settled_response( array $override = array() ): array {
+        return $override + array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK );
+    }
+
+    public static function unsettled_responses(): array {
+        return array(
+            'success is false'                    => array( self::settled_response( array( 'success' => false ) ) ),
+            'success is false without hash'       => array( self::settled_response( array( 'success' => false, 'transaction' => '' ) ) ),
+            'success flag absent, no hash'        => array( array( 'payer' => self::PAYER, 'network' => self::NETWORK ) ),
+            'success is the string true, no hash' => array( array( 'success' => 'true', 'network' => self::NETWORK ) ),
+            'empty object'                        => array( array() ),
+        );
+    }
+
+    #[DataProvider( 'unsettled_responses' )]
+    public function test_settlement_without_an_explicit_success_is_not_accepted( array $body ): void {
+        $this->respond( $body );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+    }
+
+    public static function inconsistent_responses(): array {
+        return array(
+            'success flag absent, hash present'   => array( array( 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK ) ),
+            'success is the string true'          => array( self::settled_response( array( 'success' => 'true' ) ) ),
+            'success is the number one'           => array( self::settled_response( array( 'success' => 1 ) ) ),
+            'network differs from the quote'   => array( self::settled_response( array( 'network' => 'eip155:1' ) ) ),
+            'network missing'                  => array( array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc' ) ),
+            'payer differs from the signer'    => array( self::settled_response( array( 'payer' => '0x2222222222222222222222222222222222222222' ) ) ),
+            'payer is not a string'            => array( self::settled_response( array( 'payer' => array( self::PAYER ) ) ) ),
+            'amount differs from the quote'    => array( self::settled_response( array( 'amount' => '1' ) ) ),
+            'amount is not an integer string'  => array( self::settled_response( array( 'amount' => '100010.5' ) ) ),
+            'transaction hash missing'         => array( array( 'success' => true, 'payer' => self::PAYER, 'network' => self::NETWORK ) ),
+            'transaction hash empty'           => array( self::settled_response( array( 'transaction' => '' ) ) ),
+            'transaction hash is not a string' => array( self::settled_response( array( 'transaction' => array( '0xabc' ) ) ) ),
+        );
+    }
+
+    #[DataProvider( 'inconsistent_responses' )]
+    public function test_settlement_that_disagrees_with_the_quote_is_held_for_review( array $body ): void {
+        $this->respond( $body );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertNull( $result['settled_amount'] );
+        $this->assertNotSame( '', (string) ( $result['hold_reason'] ?? '' ) );
+    }
+
+    public function test_settlement_matching_the_quote_reports_the_quoted_amount_and_no_hold(): void {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['prepared_amount'] = 10001;
+        $this->respond( self::settled_response( array( 'amount' => self::AMOUNT, 'payer' => strtolower( self::PAYER ) ) ) );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertSame( 10001, $result['settled_amount'] );
+        $this->assertArrayNotHasKey( 'hold_reason', $result );
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+    }
+
+    public function test_settlement_amount_sent_as_a_json_integer_matches_the_quote(): void {
+        $this->respond( self::settled_response( array( 'amount' => (int) self::AMOUNT ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertArrayNotHasKey( 'hold_reason', $result );
+    }
+
+    public function test_hold_reason_names_the_observed_and_the_stored_value(): void {
+        $this->respond( self::settled_response( array( 'network' => 'eip155:1' ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertStringContainsString( 'eip155:1', $result['hold_reason'] );
+        $this->assertStringContainsString( self::NETWORK, $result['hold_reason'] );
+    }
+
+    public function test_inconsistent_settlement_still_records_the_transaction_for_the_merchant(): void {
+        $this->respond( self::settled_response( array( 'network' => 'eip155:1' ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+        $this->assertSame( '0xabc', $result['order_meta']['_fd_prism_tx_hash'] );
+    }
+
+    public static function token_amounts(): array {
+        return array(
+            'usdc six decimals'        => array( '100010', '0x036CbD53842c5426634e7929541eC2318f3dCF7e', '0.100010 USDC' ),
+            'fdusd eighteen decimals'  => array( '1500000000000000000', '0xaB27f55dB008704eD8098F0dFBcF5E1aa387B9D9', '1.500000000000000000 FDUSD' ),
+            'fdusd sub-unit'           => array( '1', '0xab27f55db008704ed8098f0dfbcf5e1aa387b9d9', '0.000000000000000001 FDUSD' ),
+            'usdc whole units'         => array( '25000000', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', '25.000000 USDC' ),
+            'unknown token'            => array( '1500000', '0x9999999999999999999999999999999999999999', '1500000 atomic units of 0x9999999999999999999999999999999999999999' ),
+            'unknown token no address' => array( '1500000', '', '1500000 atomic units' ),
+            'amount is not digits'     => array( '1e6', '0x036cbd53842c5426634e7929541ec2318f3dcf7e', '' ),
+        );
+    }
+
+    #[DataProvider( 'token_amounts' )]
+    public function test_admin_amount_uses_the_decimals_of_the_settled_token( string $atomic, string $asset, string $expected ): void {
+        $this->assertSame( $expected, FD_Prism_Tokens::amount_label( $atomic, $asset ) );
     }
 
     public function test_unavailable_claim_store_rejects_before_settle(): void {

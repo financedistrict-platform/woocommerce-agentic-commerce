@@ -32,6 +32,7 @@ interface FD_Payment_Handler {
      *   'success' => bool,
      *   'transaction_reference' => string (required; an empty or reused value puts the order on hold),
      *   'settled_amount' => int,
+     *   'hold_reason' => ?string (a non-empty value puts the order on hold even when the amounts agree),
      *   'network' => ?string,
      *   'payment_method' => ?string,
      *   'payment_method_title' => ?string,
