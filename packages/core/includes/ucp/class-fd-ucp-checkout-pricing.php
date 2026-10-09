@@ -3,12 +3,15 @@ defined( 'ABSPATH' ) || exit;
 
 final class FD_UCP_Checkout_Pricing {
 
-    public static function priced_totals( int $subtotal, int $shipping ): array|WP_Error {
+    public static function priced_totals( int $subtotal, int $shipping, int $tax = 0 ): array|WP_Error {
         if ( $shipping < 0 ) {
             return new WP_Error( 'invalid_fulfillment', 'Shipping cannot be priced' );
         }
+        if ( $tax < 0 ) {
+            return new WP_Error( 'invalid_total', 'Tax cannot be priced' );
+        }
 
-        $total = $subtotal + $shipping;
+        $total = $subtotal + $shipping + $tax;
         if ( $total <= 0 ) {
             return new WP_Error( 'invalid_total', 'Checkout total must be greater than zero' );
         }
@@ -17,21 +20,55 @@ final class FD_UCP_Checkout_Pricing {
         if ( $shipping > 0 ) {
             $totals[] = array( 'type' => 'fulfillment', 'amount' => $shipping );
         }
+        if ( $tax > 0 ) {
+            $totals[] = array( 'type' => 'tax', 'amount' => $tax );
+        }
         $totals[] = array( 'type' => 'total', 'amount' => $total );
 
         return $totals;
     }
 
-    public static function totals_from_session( array $session ): array|WP_Error {
-        $subtotal = 0;
-        foreach ( json_decode( $session['line_items'] ?? '[]', true ) ?: array() as $line_item ) {
-            $subtotal += self::total_of( $line_item['totals'] ?? array() );
+    public static function order_totals( WC_Order $order ): array|WP_Error {
+        $totals = self::priced_totals(
+            FD_UCP_Formatter::to_minor( (float) $order->get_subtotal() ),
+            FD_UCP_Formatter::to_minor( (float) $order->get_shipping_total() ),
+            FD_UCP_Formatter::to_minor( (float) $order->get_total_tax() )
+        );
+        if ( is_wp_error( $totals ) ) {
+            return $totals;
         }
 
-        return self::priced_totals(
-            $subtotal,
-            self::selected_shipping_cost( json_decode( $session['fulfillment'] ?? 'null', true ) )
-        );
+        if ( self::total_of( $totals ) !== FD_UCP_Formatter::to_minor( (float) $order->get_total() ) ) {
+            return new WP_Error( 'invalid_total', 'Order total includes charges the checkout cannot quote' );
+        }
+
+        return $totals;
+    }
+
+    public static function subtotal_of( array $line_items ): int {
+        $subtotal = 0;
+        foreach ( $line_items as $line_item ) {
+            $subtotal += self::total_of( $line_item['totals'] ?? array() );
+        }
+        return $subtotal;
+    }
+
+    public static function amount_mismatch( array $amounts ): ?string {
+        $expected = null;
+        foreach ( $amounts as $name => $amount ) {
+            if ( ! is_int( $amount ) ) {
+                return "The $name amount is missing";
+            }
+            $expected ??= $amount;
+            if ( $amount !== $expected ) {
+                return 'Amounts disagree: ' . implode( ', ', array_map(
+                    static fn( $n, $a ) => "$n $a",
+                    array_keys( $amounts ),
+                    $amounts
+                ) );
+            }
+        }
+        return null === $expected ? 'No amounts to compare' : null;
     }
 
     public static function total_of( ?array $totals ): int {
