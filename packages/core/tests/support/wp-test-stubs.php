@@ -248,7 +248,101 @@ function __( string $text, string $domain = '' ): string {
 }
 
 function wc_get_product( $id ) {
-    return null;
+    return FD_Test_Product_Store::$products[ (int) $id ] ?? null;
+}
+
+final class FD_Test_Product_Store {
+    public static array $products = array();
+}
+
+final class FD_Test_Product {
+    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true ) {
+    }
+
+    public function needs_shipping(): bool {
+        return $this->ships;
+    }
+
+    public function get_id(): int {
+        return $this->id;
+    }
+
+    public function get_price(): string {
+        return $this->price;
+    }
+
+    public function get_name(): string {
+        return $this->name;
+    }
+
+    public function is_purchasable(): bool {
+        return true;
+    }
+}
+
+final class FD_Test_Shipping_Rate {
+    public function __construct( private string $id, private string $cost, private string $label = 'Rate' ) {
+    }
+
+    public function get_id(): string {
+        return $this->id;
+    }
+
+    public function get_cost(): string {
+        return $this->cost;
+    }
+
+    public function get_label(): string {
+        return $this->label;
+    }
+}
+
+final class FD_Test_WC {
+    public static ?FD_Test_WC $instance = null;
+    public static array $rates          = array();
+    public $session;
+    public $customer;
+
+    public function __construct() {
+        $this->session  = new stdClass();
+        $this->customer = new stdClass();
+    }
+
+    public function shipping(): object {
+        return new class() {
+            public function load_shipping_methods(): void {
+            }
+
+            public function calculate_shipping_for_package( array $package ): array {
+                return array( 'rates' => FD_Test_WC::$rates );
+            }
+        };
+    }
+}
+
+function WC(): FD_Test_WC {
+    return FD_Test_WC::$instance ??= new FD_Test_WC();
+}
+
+function sanitize_title( string $title ): string {
+    return strtolower( preg_replace( '/[^A-Za-z0-9_\-]+/', '-', $title ) );
+}
+
+function sanitize_email( string $email ): string {
+    return trim( $email );
+}
+
+function get_woocommerce_currency(): string {
+    return 'EUR';
+}
+
+function wp_generate_uuid4(): string {
+    return '9b2e7c1a-4d3f-4e8a-b6c5-1f0a2d3e4b5c';
+}
+
+function wc_create_order( array $args = array() ): WC_Order {
+    FD_Test_Order_Store::$created++;
+    return new WC_Order();
 }
 
 function wc_get_order( $id ) {
@@ -256,6 +350,7 @@ function wc_get_order( $id ) {
 }
 
 final class FD_Test_Order_Store {
+    public static int $created = 0;
     public static array $orders = array();
 }
 
@@ -348,6 +443,8 @@ final class FD_Test_Wpdb {
     public string $prefix = 'wp_';
     public array $sessions = array();
     public array $updates  = array();
+    public array $calls    = array();
+    public array $held     = array();
 
     public function get_charset_collate(): string {
         return '';
@@ -358,6 +455,12 @@ final class FD_Test_Wpdb {
     }
 
     public function get_var( string $query ) {
+        $this->calls[] = $query;
+        foreach ( $this->held as $name ) {
+            if ( false !== strpos( $query, "GET_LOCK('" . $name . "'" ) ) {
+                return '0';
+            }
+        }
         return '1';
     }
 
@@ -371,6 +474,7 @@ final class FD_Test_Wpdb {
     }
 
     public function update( string $table, array $data, array $where ): int {
+        $this->calls[]   = 'update';
         $this->updates[] = array( $table, $data, $where );
         if ( isset( $this->sessions[ $where['id'] ] ) ) {
             $this->sessions[ $where['id'] ] = array_merge( $this->sessions[ $where['id'] ], $data );
@@ -386,4 +490,8 @@ final class FD_Test_Wpdb {
 
 if ( ! defined( 'ARRAY_A' ) ) {
     define( 'ARRAY_A', 'ARRAY_A' );
+}
+
+if ( ! defined( 'HOUR_IN_SECONDS' ) ) {
+    define( 'HOUR_IN_SECONDS', 3600 );
 }

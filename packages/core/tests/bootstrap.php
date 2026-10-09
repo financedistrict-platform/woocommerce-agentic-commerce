@@ -102,6 +102,7 @@ require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';
 require_once $base . '/ucp/class-fd-ucp-cart-controller.php';
 require_once $base . '/class-fd-rate-limiter.php';
+require_once $base . '/ucp/class-fd-ucp-checkout-pricing.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-controller.php';
 require_once $base . '/class-fd-ucp-plugin.php';
 require_once $base . '/admin/class-fd-ucp-settings.php';
