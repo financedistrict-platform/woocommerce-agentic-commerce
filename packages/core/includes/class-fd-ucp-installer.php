@@ -64,6 +64,7 @@ class FD_UCP_Installer {
             ucp_version VARCHAR(10) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NULL,
+            expires_at DATETIME NULL,
             PRIMARY KEY (id)
         ) $charset;";
 

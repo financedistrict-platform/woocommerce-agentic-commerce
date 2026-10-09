@@ -84,7 +84,7 @@ class FD_UCP_Checkout_Controller {
         $session_id = wp_generate_uuid4();
         $currency   = get_woocommerce_currency();
 
-        $formatted_items = $this->build_line_items( $line_items, false );
+        $formatted_items = FD_UCP_Checkout_Pricing::catalog_line_items( $line_items, false );
         if ( is_wp_error( $formatted_items ) ) {
             return FD_UCP_Error::response( $formatted_items->get_error_code(), $formatted_items->get_error_message(), 422 );
         }
@@ -240,7 +240,7 @@ class FD_UCP_Checkout_Controller {
         }
 
         $items_changed = ! empty( $body['line_items'] ) && is_array( $body['line_items'] );
-        $line_items    = $this->build_line_items(
+        $line_items    = FD_UCP_Checkout_Pricing::catalog_line_items(
             $items_changed ? $body['line_items'] : ( json_decode( $session['line_items'] ?? '[]', true ) ?: array() ),
             true
         );
@@ -283,7 +283,10 @@ class FD_UCP_Checkout_Controller {
         $current_total  = FD_UCP_Checkout_Pricing::total_of( $current_totals );
         $new_total      = FD_UCP_Checkout_Pricing::total_of( $new_totals_array );
 
-        if ( $current_total !== $new_total || empty( $session['payment_meta'] ) || $session['payment_meta'] === 'null' ) {
+        $stored_meta = json_decode( $session['payment_meta'] ?? 'null', true );
+        $live_meta   = is_array( $stored_meta ) ? $this->registry->without_stale_quotes( $stored_meta ) : null;
+
+        if ( $current_total !== $new_total || empty( $stored_meta ) || $live_meta !== $stored_meta ) {
             $prepare_input = array(
                 'checkout_id'       => $session['id'],
                 'total'             => $new_total,
@@ -291,7 +294,7 @@ class FD_UCP_Checkout_Controller {
                 'checkout_base_url' => home_url( '/wp-json/' . self::NAMESPACE ),
                 'store_name'        => FD_UCP_Plugin::instance()->store_name(),
                 'order_label'       => 'Order #' . $quote['order']->get_order_number(),
-                'checkout_meta'     => json_decode( $session['payment_meta'] ?? 'null', true ),
+                'checkout_meta'     => $live_meta,
             );
             $updates['payment_meta'] = wp_json_encode( $this->registry->prepare_all( $prepare_input ) );
         }
@@ -399,8 +402,14 @@ class FD_UCP_Checkout_Controller {
 
         $payment_meta = json_decode( $session['payment_meta'] ?? '{}', true );
 
-        // Mark as in-progress
-        $this->update_session_row( $session['id'], array( 'status' => 'complete_in_progress' ) );
+        $line_items = FD_UCP_Checkout_Pricing::catalog_line_items( json_decode( $session['line_items'] ?? '[]', true ) ?: array(), true );
+        if ( is_wp_error( $line_items ) ) {
+            return FD_UCP_Error::response( $line_items->get_error_code(), $line_items->get_error_message(), 422 );
+        }
+
+        if ( ! FD_Payment_Registry::quote_is_fresh( $payment_meta[ $handler_id ] ?? null ) ) {
+            return FD_UCP_Error::response( 'quote_expired', 'Payment quote expired, update the session to get a new quote', 409 );
+        }
 
         // Ensure the WC order exists before settling — never settle without a guaranteed order record
         $order = ! empty( $session['wc_order_id'] )
@@ -412,18 +421,16 @@ class FD_UCP_Checkout_Controller {
         }
 
         if ( is_wp_error( $order ) ) {
-            $this->update_session_row( $session['id'], array( 'status' => 'incomplete' ) );
             return FD_UCP_Error::response( 'order_creation_failed', $order->get_error_message(), 422 );
         }
 
         if ( ! $order->needs_payment() ) {
-            $this->update_session_row( $session['id'], array( 'status' => 'incomplete' ) );
             return FD_UCP_Error::response( 'order_not_payable', 'The order for this checkout no longer accepts payment', 409 );
         }
 
         $this->sync_wc_order(
             $order,
-            json_decode( $session['line_items'], true ) ?: array(),
+            $line_items,
             json_decode( $session['buyer'] ?? 'null', true ),
             json_decode( $session['fulfillment'] ?? 'null', true )
         );
@@ -435,12 +442,12 @@ class FD_UCP_Checkout_Controller {
             'order'    => FD_UCP_Formatter::to_minor( (float) $order->get_total() ),
         ) );
         if ( null !== $mismatch ) {
-            $this->update_session_row( $session['id'], array(
-                'status'      => 'incomplete',
-                'wc_order_id' => $order->get_id(),
-            ) );
+            $this->update_session_row( $session['id'], array( 'wc_order_id' => $order->get_id() ) );
             return FD_UCP_Error::response( 'total_changed', "Checkout total changed, update the session to get a new quote. $mismatch", 409 );
         }
+
+        // Mark as in-progress
+        $this->update_session_row( $session['id'], array( 'status' => 'complete_in_progress' ) );
 
         // Settle payment — order is guaranteed to exist at this point
         $settle_input = array(
@@ -549,39 +556,6 @@ class FD_UCP_Checkout_Controller {
     // Helpers
     // =========================================================================
 
-    private function build_line_items( array $items, bool $keep_ids ): array|WP_Error {
-        $formatted_items = array();
-
-        foreach ( $items as $item ) {
-            $product_id = (int) ( $item['item']['id'] ?? 0 );
-            $quantity   = max( 1, (int) ( $item['quantity'] ?? 1 ) );
-            $product    = wc_get_product( $product_id );
-
-            if ( ! $product || ! $product->is_purchasable() ) {
-                return new WP_Error( 'invalid_product', "Product $product_id not found or not purchasable" );
-            }
-
-            $price      = FD_UCP_Formatter::to_minor( (float) $product->get_price() );
-            $item_total = $price * $quantity;
-
-            $formatted_items[] = array(
-                'id'       => $keep_ids && ! empty( $item['id'] ) ? $item['id'] : 'li_' . ( count( $formatted_items ) + 1 ),
-                'item'     => array(
-                    'id'    => (string) $product_id,
-                    'title' => $product->get_name(),
-                    'price' => $price,
-                ),
-                'quantity' => $quantity,
-                'totals'   => array(
-                    array( 'type' => 'subtotal', 'amount' => $item_total ),
-                    array( 'type' => 'total', 'amount' => $item_total ),
-                ),
-            );
-        }
-
-        return $formatted_items;
-    }
-
     private function quote( array $line_items, ?array $buyer, ?array $fulfillment, ?WC_Order $order ): array|WP_Error {
         $untaxed = FD_UCP_Checkout_Pricing::priced_totals(
             FD_UCP_Checkout_Pricing::subtotal_of( $line_items ),
@@ -644,17 +618,7 @@ class FD_UCP_Checkout_Controller {
 
         $order->remove_order_items( 'line_item' );
         foreach ( $line_items as $li ) {
-            $product = wc_get_product( (int) $li['item']['id'] );
-            if ( $product ) {
-                $order->add_product( $product, $li['quantity'] );
-            } else {
-                $order->add_order_note( "Product #{$li['item']['id']} no longer exists — line item preserved from session." );
-                $item = new WC_Order_Item_Product();
-                $item->set_name( $li['item']['title'] ?? "Product #{$li['item']['id']}" );
-                $item->set_quantity( $li['quantity'] );
-                $item->set_total( ( $li['item']['price'] ?? 0 ) * $li['quantity'] / 100 );
-                $order->add_item( $item );
-            }
+            $order->add_product( wc_get_product( (int) $li['item']['id'] ), $li['quantity'] );
         }
 
         $order->remove_order_items( 'shipping' );

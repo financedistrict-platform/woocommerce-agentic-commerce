@@ -20,7 +20,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $session['session_token_hash'] = hash( 'sha256', self::TOKEN );
         $session['ucp_version']        = null;
         $session['expires_at']         = gmdate( 'Y-m-d H:i:s', time() + 3600 );
-        $session['payment_meta']       = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695 ) ) );
+        $session['payment_meta']       = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
 
         $this->db                         = new FD_Test_Wpdb();
         $this->db->sessions[ self::SESSION_ID ] = $session;
@@ -28,6 +28,11 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         FD_Test_WP::$options['fd_ucp_db_version'] = '1.1.0';
         FD_UCP_Installer::maybe_upgrade();
+
+        FD_Test_Product_Store::$products = array(
+            101 => new FD_Test_Product( 101, '18.00' ),
+            205 => new FD_Test_Product( 205, '6.00' ),
+        );
 
         $this->order                      = new WC_Order();
         FD_Test_Order_Store::$orders      = array( 1001 => $this->order );

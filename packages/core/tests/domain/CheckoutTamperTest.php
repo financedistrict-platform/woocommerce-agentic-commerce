@@ -122,11 +122,13 @@ final class CheckoutTamperTest extends TestCase {
         ) );
     }
 
-    private function quoted_session( int $settled, ?int $prepared, array $totals ): void {
+    private function quoted_session( int $settled, ?int $prepared, array $totals, ?int $prepared_at = null, bool $stamped = true ): void {
+        $entry = null === $prepared ? array() : array( 'prepared_amount' => $prepared );
+        if ( $stamped ) {
+            $entry['prepared_at'] = $prepared_at ?? time();
+        }
         $this->db->sessions[ self::SESSION_ID ]['totals']       = json_encode( $totals );
-        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( array(
-            $this->handler->id() => null === $prepared ? array() : array( 'prepared_amount' => $prepared ),
-        ) );
+        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( array( $this->handler->id() => $entry ) );
         $this->handler->result = array( 'success' => true, 'transaction_reference' => '0xfeed', 'settled_amount' => $settled );
     }
 
@@ -806,6 +808,7 @@ final class CheckoutTamperTest extends TestCase {
             'line_items'         => json_encode( array() ),
             'session_token_hash' => hash( 'sha256', self::TOKEN ),
             'ucp_version'        => null,
+            'expires_at'         => gmdate( 'Y-m-d H:i:s', time() + 3600 ),
         );
         FD_UCP_Plugin::instance()->register_rest_routes();
 
@@ -897,7 +900,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertNull( $registry->get( self::DUMMY_ID ) );
         $this->assertArrayNotHasKey( self::DUMMY_ID, $registry->get_ucp_discovery_handlers() );
 
-        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695 ) ) );
+        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
         $response = $this->complete_with_dummy( $registry, array( 'amount' => '4695' ) );
 
         $this->assertSame( 400, $response->get_status(), json_encode( $response->get_data() ) );
@@ -927,7 +930,7 @@ final class CheckoutTamperTest extends TestCase {
     public function test_dummy_handler_registered_directly_on_production_cannot_complete_a_checkout(): void {
         $registry = self::dummy_registry( 'production', true, true );
         $registry->register( new FD_Dummy_Handler() );
-        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695 ) ) );
+        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
 
         $response = $this->complete_with_dummy( $registry, array( 'amount' => '4695' ) );
 
@@ -964,6 +967,217 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertContains( 'payment_complete', $this->order()->calls );
         $this->assertSame( 'completed', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    private function new_cart( int $quantity = 2 ): array {
+        $carts   = new FD_UCP_Cart_Controller();
+        $created = $carts->create_cart( new WP_REST_Request(
+            '/fd-ucp/v1/carts',
+            array(),
+            array(),
+            array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => $quantity ) ) )
+        ) );
+        return array( $carts, (string) ( $created->get_headers()['UCP-Session-Token'] ?? '' ), (string) $created->get_data()['id'] );
+    }
+
+    private function cart_request( string $token, string $cart_id, array $body = array() ): WP_REST_Request {
+        return new WP_REST_Request( '/fd-ucp/v1/carts/' . $cart_id, self::headers( $token ), array( 'id' => $cart_id ), $body );
+    }
+
+    private function make_cart_unavailable( ?FD_Test_Product $replacement ): void {
+        unset( FD_Test_Product_Store::$products[101] );
+        if ( null !== $replacement ) {
+            FD_Test_Product_Store::$products[101] = $replacement;
+        }
+    }
+
+    public function test_cart_has_a_limited_lifetime(): void {
+        [ , , $cart_id ] = $this->new_cart();
+
+        $expires_at = strtotime( (string) ( $this->db->carts[ $cart_id ]['expires_at'] ?? '' ) );
+
+        $this->assertEqualsWithDelta( time() + 6 * HOUR_IN_SECONDS, $expires_at, 5 );
+    }
+
+    public static function cart_operations(): array {
+        return array(
+            'read'     => array( 'get_cart' ),
+            'update'   => array( 'update_cart' ),
+            'checkout' => array( 'checkout' ),
+            'delete'   => array( 'delete_cart' ),
+        );
+    }
+
+    public static function dead_cart_expiries(): array {
+        $cases = array();
+        foreach ( self::cart_operations() as $name => [ $operation ] ) {
+            $cases[ "$name after expiry" ]  = array( $operation, gmdate( 'Y-m-d H:i:s', time() - 60 ) );
+            $cases[ "$name without expiry" ] = array( $operation, null );
+        }
+        return $cases;
+    }
+
+    #[DataProvider( 'dead_cart_expiries' )]
+    public function test_expired_or_unexpiring_cart_is_refused( string $operation, ?string $expires_at ): void {
+        [ $carts, $token, $cart_id ] = $this->new_cart();
+        $this->db->carts[ $cart_id ]['expires_at'] = $expires_at;
+        unset( $this->db->sessions[ $cart_id ] );
+
+        $response = $carts->$operation( $this->cart_request( $token, $cart_id, self::one_item() ) );
+
+        $this->assertSame( 404, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertArrayNotHasKey( $cart_id, $this->db->sessions );
+    }
+
+    public function test_cart_checkout_reprices_the_stored_items_at_the_current_price(): void {
+        [ $carts, $token, $cart_id ] = $this->new_cart();
+        unset( $this->db->sessions[ $cart_id ] );
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+
+        $response = $carts->checkout( $this->cart_request( $token, $cart_id ) );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $session_id = $response->get_data()['checkout_session_id'];
+        $items      = json_decode( $this->db->sessions[ $session_id ]['line_items'], true );
+        $this->assertSame( 2500, $items[0]['item']['price'] );
+        $this->assertSame( array( 'subtotal' => 5000, 'total' => 5000 ), $this->stored_totals( $session_id ) );
+        $this->assertSame( 2500, $response->get_data()['line_items'][0]['item']['price'] );
+        $this->assertSame( 5000, array_column( $response->get_data()['totals'], 'amount', 'type' )['total'] );
+    }
+
+    public function test_cart_read_shows_the_current_price(): void {
+        [ $carts, $token, $cart_id ] = $this->new_cart();
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+
+        $response = $carts->get_cart( $this->cart_request( $token, $cart_id ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 2500, $response->get_data()['line_items'][0]['item']['price'] );
+    }
+
+    public function test_cart_update_prices_the_items_at_the_current_price(): void {
+        [ $carts, $token, $cart_id ] = $this->new_cart();
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+
+        $response = $carts->update_cart( $this->cart_request( $token, $cart_id, self::one_item() ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 2500, $response->get_data()['line_items'][0]['item']['price'] );
+    }
+
+    public static function unavailable_products(): array {
+        return array(
+            'removed'         => array( null ),
+            'not purchasable' => array( new FD_Test_Product( 101, '18.00', 'Test product', true, false ) ),
+        );
+    }
+
+    #[DataProvider( 'unavailable_products' )]
+    public function test_cart_checkout_refuses_a_product_that_is_no_longer_available( ?FD_Test_Product $replacement ): void {
+        [ $carts, $token, $cart_id ] = $this->new_cart();
+        unset( $this->db->sessions[ $cart_id ] );
+        $this->make_cart_unavailable( $replacement );
+
+        $response = $carts->checkout( $this->cart_request( $token, $cart_id ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertArrayNotHasKey( $cart_id, $this->db->sessions );
+        $this->assertArrayHasKey( $cart_id, $this->db->carts );
+    }
+
+    #[DataProvider( 'unavailable_products' )]
+    public function test_complete_refuses_to_settle_a_product_that_is_no_longer_available( ?FD_Test_Product $replacement ): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->make_cart_unavailable( $replacement );
+
+        $response = $this->complete();
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_product', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_refuses_to_settle_an_expired_quote(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), time() - 3600 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'quote_expired', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_refuses_to_settle_a_quote_without_a_preparation_time(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), null, false );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'quote_expired', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_complete_refuses_an_expired_quote_before_touching_the_session_or_order(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), time() - 3600 );
+        $this->db->updates = array();
+
+        $this->complete();
+
+        $this->assertSame( array(), $this->db->updates );
+    }
+
+    public function test_complete_marks_the_session_in_progress_only_after_every_check_passed(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        FD_Test_Product_Store::$products[101] = new FD_Test_Product( 101, '25.00' );
+        $this->db->updates = array();
+
+        $response = $this->complete();
+
+        $this->assertSame( 'total_changed', $response->get_data()['messages'][0]['code'] );
+        $statuses = array_column( array_column( $this->db->updates, 1 ), 'status' );
+        $this->assertNotContains( 'complete_in_progress', $statuses );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_settles_a_quote_inside_its_lifetime(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), time() - 300 );
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 4695 ), $this->handler->settled );
+    }
+
+    public function test_update_requotes_when_the_stored_quote_is_older_than_its_lifetime(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), time() - 3600 );
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 4695 ), $this->handler->prepared );
+        $stamp = json_decode( $this->db->sessions[ self::SESSION_ID ]['payment_meta'], true )[ $this->handler->id() ]['prepared_at'] ?? null;
+        $this->assertEqualsWithDelta( time(), $stamp, 5 );
+    }
+
+    public function test_update_keeps_a_quote_inside_its_lifetime(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals(), time() - 300 );
+
+        $response = $this->update( array( 'buyer' => array( 'first_name' => 'Anna' ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->handler->prepared );
+    }
+
+    public function test_new_quotes_carry_their_preparation_time(): void {
+        $response = $this->create( self::one_item() );
+
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $stamp = json_decode( $this->db->sessions[ wp_generate_uuid4() ]['payment_meta'], true )[ $this->handler->id() ]['prepared_at'] ?? null;
+        $this->assertEqualsWithDelta( time(), $stamp, 5 );
     }
 
     private static function one_item(): array {

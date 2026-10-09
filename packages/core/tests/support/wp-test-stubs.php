@@ -275,7 +275,7 @@ final class FD_Test_Product_Store {
 }
 
 final class FD_Test_Product {
-    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true ) {
+    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true, private bool $purchasable = true ) {
     }
 
     public function needs_shipping(): bool {
@@ -295,7 +295,7 @@ final class FD_Test_Product {
     }
 
     public function is_purchasable(): bool {
-        return true;
+        return $this->purchasable;
     }
 }
 

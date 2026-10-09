@@ -186,7 +186,11 @@ Save the token before doing anything else. It cannot be fetched again, and it do
 | `DELETE` | `/wp-json/fd-ucp/v1/carts/{id}` | Delete cart |
 | `POST` | `/wp-json/fd-ucp/v1/carts/{id}/checkout` | Convert cart to checkout session |
 
+Carts live for 6 hours, then answer `404 cart_not_found`. Every cart read, update and checkout prices the items at the current catalog price, and a product that is no longer purchasable answers `422 invalid_product`.
+
 ### Checkout
+
+Items are priced at the current catalog price on create, on every update and again on complete. A payment quote is valid for 15 minutes. After that, `complete` answers `409 quote_expired`; update the session to get a new quote.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
