@@ -8,5 +8,4 @@ if [ -z "${ORDER_ID:-}" ]; then
 fi
 
 echo "=== List Returns for Order $ORDER_ID ==="
-curl -s "$UCP_API/orders/$ORDER_ID/returns" \
-  ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} | python3 -m json.tool
+curl -s "$UCP_API/orders/$ORDER_ID/returns" | python3 -m json.tool

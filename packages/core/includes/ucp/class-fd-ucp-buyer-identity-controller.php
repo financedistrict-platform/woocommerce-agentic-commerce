@@ -12,12 +12,12 @@ class FD_UCP_Buyer_Identity_Controller {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'PUT',
 				'callback'            => array( $this, 'update_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 	}
@@ -77,20 +77,12 @@ class FD_UCP_Buyer_Identity_Controller {
 			ARRAY_A
 		);
 
-		if ( ! $session ) {
+		if ( ! $session || ! FD_UCP_Ownership::owns_row( $session ) ) {
 			return FD_UCP_Error::response( 'session_not_found', 'Session not found', 404 );
 		}
 
 		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
-		}
-
-		if ( ! FD_UCP_Session_Token::owns_row( $request, $session ) ) {
-			return FD_UCP_Error::response( 'session_ownership', 'A valid UCP-Session-Token is required for this checkout session', 403 );
-		}
-
-		return $session;
+		return null !== $pin ? $pin : $session;
 	}
 
 	private function envelope( array $session, array $buyer ): array {

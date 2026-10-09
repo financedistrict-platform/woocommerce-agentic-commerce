@@ -18,12 +18,12 @@ class FD_UCP_Returns_Controller {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'create_return' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'list_returns' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 	}
@@ -123,7 +123,7 @@ class FD_UCP_Returns_Controller {
 			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 
-		if ( ! FD_UCP_Session_Token::owns_order( $request, $order ) ) {
+		if ( ! FD_UCP_Ownership::owns_order( $order ) ) {
 			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 

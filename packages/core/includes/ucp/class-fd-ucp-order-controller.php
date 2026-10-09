@@ -9,25 +9,24 @@ class FD_UCP_Order_Controller {
         register_rest_route( self::NAMESPACE, '/orders', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'list_orders' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/orders/(?P<id>[\d]+)', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_order' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
     }
 
     public function list_orders( WP_REST_Request $request ): WP_REST_Response {
-        $token_hash = FD_UCP_Session_Token::presented_hash( $request );
-        if ( null === $token_hash ) {
-            return FD_UCP_Error::response( 'session_token_required', 'A UCP-Session-Token header is required to list orders', 401 );
+        $platform_id = FD_UCP_Request_Context::current()->platform_id();
+        if ( '' === $platform_id ) {
+            return FD_UCP_Error::response( 'signature_missing', 'A verified platform is required to list orders', 401 );
         }
         $limit  = min( (int) ( $request->get_param( 'limit' ) ?? 20 ), 50 );
         $offset = max( (int) ( $request->get_param( 'offset' ) ?? 0 ), 0 );
 
-        // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- filtering UCP orders by session token hash
         $orders = wc_get_orders( array(
             'limit'      => $limit,
             'offset'     => $offset,
@@ -39,8 +38,8 @@ class FD_UCP_Order_Controller {
                     'compare' => 'EXISTS',
                 ),
                 array(
-                    'key'   => FD_UCP_Session_Token::ORDER_META,
-                    'value' => $token_hash,
+                    'key'   => FD_UCP_Ownership::ORDER_META,
+                    'value' => $platform_id,
                 ),
             ),
         ) );
@@ -80,7 +79,7 @@ class FD_UCP_Order_Controller {
             return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 
-        if ( ! FD_UCP_Session_Token::owns_order( $request, $order ) ) {
+        if ( ! FD_UCP_Ownership::owns_order( $order ) ) {
             return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 

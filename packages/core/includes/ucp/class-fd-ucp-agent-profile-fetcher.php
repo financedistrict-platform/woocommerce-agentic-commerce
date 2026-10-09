@@ -7,6 +7,7 @@ class FD_UCP_Agent_Profile_Fetcher {
     public const CACHE_TTL   = 600;
     public const MAX_BYTES   = 131072;
     public const TIMEOUT     = 3;
+    public const REFRESH_INTERVAL = 60;
 
     private bool $allow_loopback;
     private bool $fetched = false;
@@ -29,6 +30,21 @@ class FD_UCP_Agent_Profile_Fetcher {
 
         $result = $this->fetch( $url );
         wp_cache_set( $key, $result, self::CACHE_GROUP, self::CACHE_TTL );
+        return $result;
+    }
+
+    public function refresh( string $url ): array {
+        $throttle = 'fd_ucp_profile_refresh_' . md5( $url );
+        if ( $this->fetched || false !== get_transient( $throttle ) ) {
+            return $this->lookup( $url );
+        }
+        set_transient( $throttle, 1, self::REFRESH_INTERVAL );
+        $this->fetched = true;
+
+        $result = $this->fetch( $url );
+        if ( empty( $result['failed'] ) ) {
+            wp_cache_set( md5( $url ), $result, self::CACHE_GROUP, self::CACHE_TTL );
+        }
         return $result;
     }
 
@@ -65,8 +81,10 @@ class FD_UCP_Agent_Profile_Fetcher {
         }
 
         $version = $profile['ucp']['version'] ?? null;
+        $keys    = $profile['keys'] ?? array();
         return array(
             'version'    => is_string( $version ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $version ) ? $version : null,
+            'keys'       => is_array( $keys ) ? array_values( array_filter( $keys, 'is_array' ) ) : array(),
             'fetched_at' => time(),
         );
     }

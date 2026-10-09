@@ -8,5 +8,4 @@ if [ -z "${SESSION_ID:-}" ]; then
 fi
 
 echo "=== Get Buyer Identity for Session $SESSION_ID ==="
-curl -s "$UCP_API/checkout-sessions/$SESSION_ID/buyer" \
-  ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} | python3 -m json.tool
+curl -s "$UCP_API/checkout-sessions/$SESSION_ID/buyer" | python3 -m json.tool

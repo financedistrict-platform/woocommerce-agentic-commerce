@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# Shared config for all curl tests.
-# Source this file: . ./00-config.sh
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 UCP_API="$BASE_URL/wp-json/fd-ucp/v1"
-SESSION_TOKEN="${SESSION_TOKEN:-}"
+UCP_PROFILE="${UCP_PROFILE:-https://fd.xyz/.well-known/ucp}"
+UCP_API_KEY="${UCP_API_KEY:-}"
 
 curl() {
-  if [ -n "$SESSION_TOKEN" ]; then
-    command curl -H "UCP-Session-Token: $SESSION_TOKEN" "$@"
-  else
-    command curl "$@"
-  fi
+  command curl -H "UCP-Agent: profile=\"$UCP_PROFILE\"" -H "X-API-Key: $UCP_API_KEY" "$@"
 }

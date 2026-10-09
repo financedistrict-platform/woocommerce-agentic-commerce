@@ -7,7 +7,7 @@ use PHPUnit\Framework\TestCase;
 final class BackCompatOriginalAgentTest extends TestCase {
 
     private const SESSION_ID = '5f0c2a8e-3b1d-4c6e-9a7f-2d4b8e1c0a91';
-    private const TOKEN      = 'c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55c0ffee66c0ffee77c0ffee88';
+    private const PLATFORM   = 'https://platform.example/.well-known/ucp';
 
     private FD_Test_Wpdb $db;
     private WC_Order $order;
@@ -16,15 +16,17 @@ final class BackCompatOriginalAgentTest extends TestCase {
     protected function setUp(): void {
         FD_Test_WP::reset();
 
-        $session                       = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
-        $session['session_token_hash'] = hash( 'sha256', self::TOKEN );
-        $session['ucp_version']        = null;
-        $session['expires_at']         = gmdate( 'Y-m-d H:i:s', time() + 3600 );
-        $session['payment_meta']       = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
+        $session                 = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
+        $session['platform_id']  = self::PLATFORM;
+        $session['ucp_version']  = null;
+        $session['expires_at']   = gmdate( 'Y-m-d H:i:s', time() + 3600 );
+        $session['payment_meta'] = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
 
         $this->db                         = new FD_Test_Wpdb();
         $this->db->sessions[ self::SESSION_ID ] = $session;
         $GLOBALS['wpdb']                  = $this->db;
+
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::current()->with_platform( self::PLATFORM ) );
 
         FD_Test_WP::$options['fd_ucp_db_version'] = '1.1.0';
         FD_UCP_Installer::maybe_upgrade();
@@ -58,7 +60,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         return $controller->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array( 'UCP-Session-Token' => self::TOKEN ),
+            array(),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( $instrument ) ) )
         ) );
@@ -117,7 +119,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         $response = ( new FD_UCP_Checkout_Controller( $registry ) )->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array( 'UCP-Session-Token' => self::TOKEN ),
+            array(),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( array( 'handler_id' => 'x402', 'credential' => array( 'a' => 1 ) ) ) ) )
         ) );
@@ -161,7 +163,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $registry->register( $this->handler );
         $response = ( new FD_UCP_Checkout_Controller( $registry ) )->get_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID,
-            array( 'UCP-Agent' => 'profile="https://agent.example/p"', 'UCP-Session-Token' => self::TOKEN ),
+            array( 'UCP-Agent' => 'profile="https://agent.example/p"' ),
             array( 'id' => self::SESSION_ID )
         ) );
         $resolver->setValue( $plugin, null );

@@ -12,11 +12,13 @@ final class FD_Test_WP {
     public static $http_response    = null;
     public static array $http_queue = array();
     public static bool $live_http   = false;
+    public static array $uuids      = array();
     public static array $routes     = array();
     public static string $environment = 'production';
 
     public static function reset(): void {
         self::$routes        = array();
+        self::$uuids         = array();
         self::$options       = array();
         self::$transients    = array();
         self::$cache         = array();
@@ -29,6 +31,7 @@ final class FD_Test_WP {
         self::$live_http     = false;
         self::$environment   = 'production';
         FD_UCP_Request_Context::set( null );
+        WC_Admin_Settings::reset();
     }
 
     public static function hook_count( string $tag ): int {
@@ -62,7 +65,7 @@ function add_option( string $key, $value = '', $deprecated = '', $autoload = nul
 
 function register_rest_route( string $namespace, string $route, array $args = array() ): bool {
     foreach ( isset( $args['methods'] ) ? array( $args ) : $args as $endpoint ) {
-        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'] );
+        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'], 'permission_callback' => $endpoint['permission_callback'] ?? null );
     }
     return true;
 }
@@ -264,6 +267,36 @@ function esc_html__( string $text, string $domain = '' ): string {
 
 function __( string $text, string $domain = '' ): string {
     return $text;
+}
+
+function esc_attr( string $text ): string {
+    return htmlspecialchars( $text, ENT_QUOTES );
+}
+
+function esc_attr__( string $text, string $domain = '' ): string {
+    return esc_attr( $text );
+}
+
+function wp_unslash( $value ) {
+    return is_array( $value ) ? array_map( 'wp_unslash', $value ) : stripslashes( (string) $value );
+}
+
+final class WC_Admin_Settings {
+    public static array $messages = array();
+    public static array $errors   = array();
+
+    public static function add_message( string $text ): void {
+        self::$messages[] = $text;
+    }
+
+    public static function add_error( string $text ): void {
+        self::$errors[] = $text;
+    }
+
+    public static function reset(): void {
+        self::$messages = array();
+        self::$errors   = array();
+    }
 }
 
 function wc_get_product( $id ) {
@@ -513,12 +546,17 @@ function get_woocommerce_currency(): string {
 }
 
 function wp_generate_uuid4(): string {
+    if ( ! empty( FD_Test_WP::$uuids ) ) {
+        return array_shift( FD_Test_WP::$uuids );
+    }
     return '9b2e7c1a-4d3f-4e8a-b6c5-1f0a2d3e4b5c';
 }
 
 function wc_create_order( array $args = array() ): WC_Order {
     FD_Test_Order_Store::$created++;
-    return new WC_Order();
+    $order                       = new WC_Order();
+    FD_Test_Order_Store::$made[] = $order;
+    return $order;
 }
 
 function wc_get_order( $id ) {
@@ -546,6 +584,7 @@ function wc_create_refund( array $args ) {
 }
 
 final class FD_Test_Order_Store {
+    public static array $made   = array();
     public static int $created  = 0;
     public static array $orders  = array();
     public static array $refunds = array();
@@ -557,16 +596,39 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
         private array $params;
         private array $json;
         private string $route;
+        private string $method;
+        private string $body;
+        public array $form = array();
 
-        public function __construct( string $route = '/fd-ucp/v1', array $headers = array(), array $params = array(), array $json = array() ) {
+        public function __construct( string $route = '/fd-ucp/v1', array $headers = array(), array $params = array(), array $json = array(), string $method = 'GET', ?string $body = null ) {
             $this->route   = $route;
             $this->headers = array_change_key_case( $headers, CASE_LOWER );
             $this->params  = $params;
             $this->json    = $json;
+            $this->method  = $method;
+            $this->body    = $body ?? ( array() === $json ? '' : json_encode( $json ) );
         }
 
         public function get_header( string $name ): ?string {
-            return $this->headers[ strtolower( $name ) ] ?? null;
+            $value = $this->headers[ strtolower( $name ) ] ?? null;
+            return is_array( $value ) ? implode( ',', $value ) : $value;
+        }
+
+        public function get_header_as_array( string $name ): ?array {
+            $value = $this->headers[ strtolower( $name ) ] ?? null;
+            return null === $value ? null : (array) $value;
+        }
+
+        public function get_method(): string {
+            return $this->method;
+        }
+
+        public function get_body(): string {
+            return $this->body;
+        }
+
+        public function get_body_params(): array {
+            return $this->form;
         }
 
         public function get_param( string $name ) {
@@ -784,6 +846,106 @@ final class FD_Test_Wpdb {
     public array $calls    = array();
     public array $held     = array();
     public array $claims   = array();
+    public array $schema   = array();
+    public array $alters   = array();
+    public bool $fail_alters = false;
+    public bool $fail_inserts = false;
+
+    public function __construct() {
+        $this->schema = self::current_schema();
+    }
+
+    public static function current_schema(): array {
+        return array(
+            'wp_fd_ucp_checkout_sessions' => array(
+                'columns' => array( 'id', 'status', 'platform_id', 'idempotency_key', 'idempotency_hash', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY', 'status', 'wc_order_id', 'platform_idempotency' ),
+            ),
+            'wp_fd_ucp_carts'             => array(
+                'columns' => array( 'id', 'line_items', 'platform_id', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY' ),
+            ),
+            'wp_fd_ucp_payment_claims'    => array(
+                'columns' => array( 'claim_key', 'kind', 'checkout_id' ),
+                'indexes' => array( 'PRIMARY', 'checkout_id' ),
+            ),
+        );
+    }
+
+    public static function legacy_schema(): array {
+        return array(
+            'wp_fd_ucp_checkout_sessions' => array(
+                'columns' => array( 'id', 'status', 'session_token_hash', 'idempotency_key', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY', 'status', 'wc_order_id', 'idempotency_key' ),
+            ),
+            'wp_fd_ucp_carts'             => array(
+                'columns' => array( 'id', 'line_items', 'session_token_hash', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY' ),
+            ),
+            'wp_fd_ucp_payment_claims'    => array(
+                'columns' => array( 'claim_key', 'kind', 'checkout_id' ),
+                'indexes' => array( 'PRIMARY', 'checkout_id' ),
+            ),
+        );
+    }
+
+    public function esc_like( string $text ): string {
+        return $text;
+    }
+
+    public function suppress_errors( bool $suppress = true ): bool {
+        return false;
+    }
+
+    private function show( string $query ) {
+        if ( preg_match( "/^SHOW TABLES LIKE '([^']+)'/", $query, $m ) ) {
+            return isset( $this->schema[ $m[1] ] ) ? $m[1] : null;
+        }
+        if ( preg_match( "/^SHOW COLUMNS FROM `([^`]+)` LIKE '([^']+)'/", $query, $m ) ) {
+            return in_array( $m[2], $this->schema[ $m[1] ]['columns'] ?? array(), true ) ? $m[2] : null;
+        }
+        if ( preg_match( "/^SHOW INDEX FROM `([^`]+)` WHERE Key_name = '([^']+)'/", $query, $m ) ) {
+            return in_array( $m[2], $this->schema[ $m[1] ]['indexes'] ?? array(), true ) ? $m[1] : null;
+        }
+        return false;
+    }
+
+    private function alter( string $query ): int|false {
+        $this->alters[] = $query;
+        if ( $this->fail_alters || ! preg_match( '/^ALTER TABLE `([^`]+)` (.+)$/', $query, $m ) || ! isset( $this->schema[ $m[1] ] ) ) {
+            return false;
+        }
+
+        $table = $this->schema[ $m[1] ];
+        foreach ( preg_split( '/,\s*(?=ADD |DROP )/', $m[2] ) as $clause ) {
+            if ( preg_match( '/^ADD COLUMN (\w+)/', $clause, $c ) ) {
+                if ( in_array( $c[1], $table['columns'], true ) ) {
+                    return false;
+                }
+                $table['columns'][] = $c[1];
+            } elseif ( preg_match( '/^ADD UNIQUE KEY (\w+)/', $clause, $c ) ) {
+                if ( in_array( $c[1], $table['indexes'], true ) ) {
+                    return false;
+                }
+                $table['indexes'][] = $c[1];
+            } elseif ( preg_match( '/^DROP INDEX (\w+)/', $clause, $c ) ) {
+                if ( ! in_array( $c[1], $table['indexes'], true ) ) {
+                    return false;
+                }
+                $table['indexes'] = array_values( array_diff( $table['indexes'], array( $c[1] ) ) );
+            } elseif ( preg_match( '/^DROP COLUMN (\w+)/', $clause, $c ) ) {
+                if ( ! in_array( $c[1], $table['columns'], true ) ) {
+                    return false;
+                }
+                $table['columns'] = array_values( array_diff( $table['columns'], array( $c[1] ) ) );
+            } else {
+                return false;
+            }
+        }
+
+        $this->schema[ $m[1] ] = $table;
+        return 0;
+    }
 
     public function get_charset_collate(): string {
         return '';
@@ -794,6 +956,9 @@ final class FD_Test_Wpdb {
     }
 
     public function get_var( string $query ) {
+        if ( 0 === strpos( $query, 'SHOW ' ) ) {
+            return $this->show( $query );
+        }
         $this->calls[] = $query;
         if ( false !== strpos( $query, 'fd_ucp_payment_claims' ) ) {
             preg_match( "/claim_key = '([0-9a-f]+)'/", $query, $m );
@@ -808,7 +973,11 @@ final class FD_Test_Wpdb {
     }
 
     public function get_row( string $query, $output = null ) {
+        $platform = preg_match( "/platform_id = '([^']*)'/", $query, $m ) ? $m[1] : null;
         foreach ( $this->rows( $query ) as $row ) {
+            if ( null !== $platform && ( $row['platform_id'] ?? null ) !== $platform ) {
+                continue;
+            }
             foreach ( array( 'id', 'idempotency_key' ) as $column ) {
                 if ( ! empty( $row[ $column ] ) && false !== strpos( $query, "'" . $row[ $column ] . "'" ) ) {
                     return $row;
@@ -829,6 +998,9 @@ final class FD_Test_Wpdb {
     }
 
     public function query( string $query ): int|false {
+        if ( 0 === strpos( $query, 'ALTER TABLE' ) ) {
+            return $this->alter( $query );
+        }
         preg_match( "/VALUES \('([0-9a-f]+)', '[^']*', '([^']*)'/", $query, $m );
         if ( isset( $this->claims[ $m[1] ] ) ) {
             return 0;
@@ -837,7 +1009,10 @@ final class FD_Test_Wpdb {
         return 1;
     }
 
-    public function insert( string $table, array $data ): int {
+    public function insert( string $table, array $data ): int|false {
+        if ( $this->fail_inserts ) {
+            return false;
+        }
         $rows                = &$this->table( $table );
         $rows[ $data['id'] ] = $data;
         return 1;

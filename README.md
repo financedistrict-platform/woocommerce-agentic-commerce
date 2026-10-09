@@ -141,19 +141,31 @@ The profile fetch only goes to public HTTPS hosts, has a 3 second timeout and a 
 
 An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 configuration_invalid` and shows an admin notice. The rest of the shop keeps working.
 
-### Session token
+### Authentication
 
-`POST /carts` and `POST /checkout-sessions` return a random `UCP-Session-Token` response header once. The store keeps only its SHA-256 hash. Send it back as a `UCP-Session-Token` request header on every later call for that cart, checkout session, its buyer, promotions, order and returns. A checkout session made from a cart keeps the cart's token.
+Every route except `POST /catalog/search`, `POST /catalog/lookup` and `/.well-known/ucp` needs a verified calling platform. Send the platform profile URL in `UCP-Agent` (`profile="https://..."`, HTTPS only) and prove it one of two ways:
 
-| Request without the right token | Answer |
+- **Sign the request.** Add `Signature-Input` and `Signature` (RFC 9421). The store finds the key by `keyid` in the `keys[]` JWK set of the platform profile (ES256 or Ed25519), checks `Content-Digest` against the body and accepts signatures created within the last 5 minutes. The signature must cover `@method`, `@authority`, `@path`, `ucp-agent`, plus `@query` when there is a query string, `content-digest` and `content-type` when there is a body, and `idempotency-key` when that header is sent. `@authority` is the host of the store URL.
+- **Present a registered key.** Ask the merchant for a key and send it as `X-API-Key`. The merchant creates it under **WooCommerce > Settings > Advanced > UCP versions > Platform access** by entering the platform profile URL; the key is shown once and only its SHA-256 hash is stored. A key works only together with the `UCP-Agent` profile it was issued for, and the merchant can disable or delete it at any time. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the agent you are onboarding.
+
+The verified profile URL (lower-case host, no fragment, no trailing slash) is the platform id. A cart, checkout session or order belongs to the platform that created it. Any other platform, and any record created before the upgrade to schema `1.6.0`, gets `404` as if the record did not exist. Open carts and checkout sessions created before that upgrade are unreachable afterwards.
+
+| Problem | Answer |
 |---|---|
-| Cart, checkout session, buyer, promotions | `403` |
-| `GET /orders/{id}`, `/orders/{id}/returns` | `404 order_not_found` |
-| `GET /orders` | `401 session_token_required` |
-| `POST /checkout-sessions` with a used `Idempotency-Key` | `409 idempotency_key_conflict` |
+| `UCP-Agent` missing, not HTTPS or longer than 191 characters | `400 invalid_profile_url` |
+| No `Signature-Input` and no `X-API-Key` | `401 signature_missing` |
+| Signature malformed, not covering the required parts, outside the 5 minute window or not matching the key | `401 signature_invalid` |
+| `keyid` not in the platform profile, or `X-API-Key` unknown or disabled | `401 key_not_found` |
+| `Content-Digest` does not match the body | `400 digest_mismatch` |
+| Key is not ES256 (P-256) or Ed25519 | `400 algorithm_unsupported` |
+| Platform profile cannot be fetched while verifying a signature | `424 profile_unreachable` |
+| `X-API-Key` is registered for another platform profile | `403 profile_not_trusted` |
+| Cart, checkout session, buyer, promotions, order or returns of another platform | `404` (`cart_not_found`, `checkout_not_found`, `session_not_found`, `order_not_found`) |
+| `POST /checkout-sessions` repeating an `Idempotency-Key` with a different body | `409 idempotency_key_conflict` |
+| `Idempotency-Key` longer than 128 characters | `400 invalid_idempotency_key` |
+| Cart or checkout session could not be stored | `503 storage_unavailable` |
 
-Save the token before doing anything else. It cannot be fetched again, and it does not expire: after checkout it keeps giving access to that order and its returns.
-
+An `Idempotency-Key` is scoped to the calling platform: repeating it with the same body returns the stored session (`200`), another platform using the same value gets its own session.
 `POST /orders/{id}/returns` records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
 
 ### Prism Console Setup
@@ -284,7 +296,8 @@ Integration tests run against a live store using curl. Point them at your runnin
 
 ```bash
 # UCP protocol tests (up to 19 checks, depending on the version's capabilities)
-# Optional: UCP_VER=<version> UCP_AGENT_PROFILE=<profile url, with trailing slash>
+# Needs a registered key: UCP_API_KEY=<key> and optionally UCP_PROFILE=<profile url> (default https://fd.xyz/.well-known/ucp)
+# Optional: UCP_VER=<version> UCP_OTHER_PROFILE=<profile url> UCP_OTHER_API_KEY=<key of a second platform>
 bash packages/core/tests/curl/30-ucp-integration-test.sh [product_id]
 
 # Prism payment tests (15 tests)

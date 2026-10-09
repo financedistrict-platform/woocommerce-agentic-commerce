@@ -9,8 +9,7 @@ fi
 
 echo "=== Convert Cart $CART_ID to Checkout Session ==="
 RESPONSE=$(curl -s -X POST "$UCP_API/carts/$CART_ID/checkout" \
-  -H "Content-Type: application/json" \
-  ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"})
+  -H "Content-Type: application/json")
 
 echo "$RESPONSE" | python3 -m json.tool
 

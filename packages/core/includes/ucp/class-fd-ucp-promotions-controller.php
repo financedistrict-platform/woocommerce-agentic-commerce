@@ -12,13 +12,13 @@ class FD_UCP_Promotions_Controller {
 		register_rest_route( self::NAMESPACE, '/promotions/validate', array(
 			'methods'             => 'POST',
 			'callback'            => array( $this, 'validate' ),
-			'permission_callback' => '__return_true',
+			'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 		) );
 
 		register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)/promotions', array(
 			'methods'             => 'POST',
 			'callback'            => array( $this, 'apply' ),
-			'permission_callback' => '__return_true',
+			'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 		) );
 	}
 

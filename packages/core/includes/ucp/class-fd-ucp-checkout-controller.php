@@ -17,32 +17,32 @@ class FD_UCP_Checkout_Controller {
         register_rest_route( self::NAMESPACE, '/checkout-sessions', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'create_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)', array(
             array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_session' ),
-                'permission_callback' => '__return_true',
+                'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
             ),
             array(
                 'methods'             => 'PUT',
                 'callback'            => array( $this, 'update_session' ),
-                'permission_callback' => '__return_true',
+                'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
             ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)/complete', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'complete_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)/cancel', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'cancel_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
     }
 
@@ -56,22 +56,15 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $rl->get_error_code(), $rl->get_error_message(), 429 );
         }
 
-        // Idempotency-Key: return existing session if key was already used.
         $idempotency_key = $request->get_header( 'idempotency-key' );
+        if ( $idempotency_key && strlen( $idempotency_key ) > 128 ) {
+            return FD_UCP_Error::response( 'invalid_idempotency_key', 'Idempotency-Key must be at most 128 characters', 400 );
+        }
+        $body_hash = hash( 'sha256', (string) $request->get_body() );
         if ( $idempotency_key ) {
             $existing = $this->load_session_by_idempotency_key( $idempotency_key );
             if ( $existing ) {
-                if ( ! FD_UCP_Session_Token::owns_row( $request, $existing ) ) {
-                    return FD_UCP_Error::response( 'idempotency_key_conflict', 'Idempotency-Key was already used', 409 );
-                }
-                $pin = FD_UCP_Plugin::instance()->pin_session( $request, $existing['ucp_version'] ?? null );
-                if ( null !== $pin ) {
-                    return $pin;
-                }
-                return new WP_REST_Response(
-                    FD_UCP_Formatter::format_checkout_session( $existing, $this->registry ),
-                    200
-                );
+                return $this->replay_session( $request, $existing, $body_hash );
             }
         }
 
@@ -134,10 +127,8 @@ class FD_UCP_Checkout_Controller {
 
         $payment_meta = $this->registry->prepare_all( $prepare_input );
 
-        // Persist session
-        $token = FD_UCP_Session_Token::issue();
-        $now   = current_time( 'mysql', true );
-        $this->insert_session( array(
+        $now    = current_time( 'mysql', true );
+        $stored = $this->insert_session( array(
             'id'               => $session_id,
             'status'           => 'incomplete',
             'currency'         => $currency,
@@ -147,19 +138,40 @@ class FD_UCP_Checkout_Controller {
             'fulfillment'      => $fulfillment ? wp_json_encode( $fulfillment ) : null,
             'payment_meta'     => wp_json_encode( $payment_meta ),
             'wc_order_id'      => $order_id,
-            'session_token_hash' => FD_UCP_Session_Token::hash( $token ),
-            'idempotency_key'  => $idempotency_key,
+            'platform_id'      => FD_UCP_Request_Context::current()->platform_id(),
+            'idempotency_key'  => $idempotency_key ?: null,
+            'idempotency_hash' => $idempotency_key ? $body_hash : null,
             'ucp_version'      => FD_UCP_Request_Context::current()->session_pin(),
             'created_at'       => $now,
             'updated_at'       => $now,
             'expires_at'       => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
         ) );
 
+        if ( ! $stored ) {
+            $quote['order']->update_status( 'cancelled', 'UCP checkout session could not be stored.' );
+            $existing = $idempotency_key ? $this->load_session_by_idempotency_key( $idempotency_key ) : null;
+            if ( $existing ) {
+                return $this->replay_session( $request, $existing, $body_hash );
+            }
+            return FD_UCP_Error::response( 'storage_unavailable', 'The checkout session could not be stored', 503 );
+        }
+
         $session = $this->load_session( $session_id );
 
-        return FD_UCP_Session_Token::hand_over(
-            new WP_REST_Response( FD_UCP_Formatter::format_checkout_session( $session, $this->registry ), 201 ),
-            $token
+        return new WP_REST_Response( FD_UCP_Formatter::format_checkout_session( $session, $this->registry ), 201 );
+    }
+
+    private function replay_session( WP_REST_Request $request, array $existing, string $body_hash ): WP_REST_Response {
+        if ( ! hash_equals( (string) ( $existing['idempotency_hash'] ?? '' ), $body_hash ) ) {
+            return FD_UCP_Error::response( 'idempotency_key_conflict', 'Idempotency-Key was already used with a different request', 409 );
+        }
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $existing['ucp_version'] ?? null );
+        if ( null !== $pin ) {
+            return $pin;
+        }
+        return new WP_REST_Response(
+            FD_UCP_Formatter::format_checkout_session( $existing, $this->registry ),
+            200
         );
     }
 
@@ -168,19 +180,9 @@ class FD_UCP_Checkout_Controller {
     // =========================================================================
 
     public function get_session( WP_REST_Request $request ): WP_REST_Response {
-        $session = $this->load_session( $request->get_param( 'id' ) );
-        if ( ! $session ) {
-            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
-        }
-
-        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-        if ( null !== $pin ) {
-            return $pin;
-        }
-
-        $ownership = $this->verify_ownership( $request, $session );
-        if ( is_wp_error( $ownership ) ) {
-            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+        $session = $this->owned_session( $request );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
         return new WP_REST_Response(
@@ -330,19 +332,9 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function writable_session( WP_REST_Request $request ): array|WP_REST_Response {
-        $session = $this->load_session( (string) $request->get_param( 'id' ) );
-        if ( ! $session ) {
-            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
-        }
-
-        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-        if ( null !== $pin ) {
-            return $pin;
-        }
-
-        $ownership = $this->verify_ownership( $request, $session );
-        if ( is_wp_error( $ownership ) ) {
-            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+        $session = $this->owned_session( $request );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
         if ( in_array( $session['status'], self::FROZEN_STATUSES, true ) ) {
@@ -434,19 +426,9 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function do_complete_session( WP_REST_Request $request, string $session_id ): WP_REST_Response {
-        $session = $this->load_session( $session_id );
-        if ( ! $session ) {
-            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
-        }
-
-        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-        if ( null !== $pin ) {
-            return $pin;
-        }
-
-        $ownership = $this->verify_ownership( $request, $session );
-        if ( is_wp_error( $ownership ) ) {
-            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+        $session = $this->owned_session( $request, $session_id );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
         if ( in_array( $session['status'], array( 'canceled', 'completed', 'complete_in_progress', 'requires_escalation', 'expired' ), true ) ) {
@@ -603,19 +585,9 @@ class FD_UCP_Checkout_Controller {
     // =========================================================================
 
     public function cancel_session( WP_REST_Request $request ): WP_REST_Response {
-        $session = $this->load_session( $request->get_param( 'id' ) );
-        if ( ! $session ) {
-            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
-        }
-
-        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-        if ( null !== $pin ) {
-            return $pin;
-        }
-
-        $ownership = $this->verify_ownership( $request, $session );
-        if ( is_wp_error( $ownership ) ) {
-            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
+        $session = $this->owned_session( $request );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
         if ( 'completed' === $session['status'] ) {
@@ -808,7 +780,7 @@ class FD_UCP_Checkout_Controller {
         if ( ! empty( $handler_id ) ) {
             $order->update_meta_data( '_fd_ucp_handler_id', $handler_id );
         }
-        $order->update_meta_data( FD_UCP_Session_Token::ORDER_META, $session[ FD_UCP_Session_Token::COLUMN ] ?? '' );
+        $order->update_meta_data( FD_UCP_Ownership::ORDER_META, (string) ( $session['platform_id'] ?? '' ) );
 
         foreach ( $settle_result['order_meta'] ?? array() as $meta_key => $meta_value ) {
             $order->update_meta_data( $meta_key, $meta_value );
@@ -830,11 +802,14 @@ class FD_UCP_Checkout_Controller {
         return null;
     }
 
-    private function verify_ownership( WP_REST_Request $request, array $session ): true|WP_Error {
-        if ( ! FD_UCP_Session_Token::owns_row( $request, $session ) ) {
-            return new WP_Error( 'session_ownership', 'A valid UCP-Session-Token is required for this checkout session' );
+    private function owned_session( WP_REST_Request $request, ?string $id = null ): array|WP_REST_Response {
+        $session = $this->load_session( $id ?? (string) $request->get_param( 'id' ) );
+        if ( ! $session || ! FD_UCP_Ownership::owns_row( $session ) ) {
+            return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
-        return true;
+
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        return null !== $pin ? $pin : $session;
     }
 
     // =========================================================================
@@ -1009,10 +984,10 @@ class FD_UCP_Checkout_Controller {
     // Database
     // =========================================================================
 
-    private function insert_session( array $data ): void {
+    private function insert_session( array $data ): bool {
         global $wpdb;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- custom table
-        $wpdb->insert( "{$wpdb->prefix}fd_ucp_checkout_sessions", $data );
+        return false !== $wpdb->insert( "{$wpdb->prefix}fd_ucp_checkout_sessions", $data );
     }
 
     private function load_session( string $id ): ?array {
@@ -1038,7 +1013,11 @@ class FD_UCP_Checkout_Controller {
         global $wpdb;
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $row = $wpdb->get_row(
-            $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}fd_ucp_checkout_sessions WHERE idempotency_key = %s LIMIT 1", $key ),
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}fd_ucp_checkout_sessions WHERE platform_id = %s AND idempotency_key = %s LIMIT 1",
+                FD_UCP_Request_Context::current()->platform_id(),
+                $key
+            ),
             ARRAY_A
         );
         return $row ?: null;

@@ -18,12 +18,10 @@ if [ -z "$LINE_ITEM_ID" ]; then
   echo "(Whole order)"
   curl -s -X POST "$UCP_API/orders/$ORDER_ID/returns" \
     -H "Content-Type: application/json" \
-    ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} \
     -d '{}' | python3 -m json.tool
 else
   echo "(Item $LINE_ITEM_ID x$QUANTITY)"
   curl -s -X POST "$UCP_API/orders/$ORDER_ID/returns" \
     -H "Content-Type: application/json" \
-    ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} \
     -d "{\"items\": [{\"line_item_id\": $LINE_ITEM_ID, \"quantity\": $QUANTITY, \"reason\": \"Test return\"}]}" | python3 -m json.tool
 fi
