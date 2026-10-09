@@ -833,6 +833,106 @@ final class FD_Test_Wpdb {
     public array $calls    = array();
     public array $held     = array();
     public array $claims   = array();
+    public array $schema   = array();
+    public array $alters   = array();
+    public bool $fail_alters = false;
+    public bool $fail_inserts = false;
+
+    public function __construct() {
+        $this->schema = self::current_schema();
+    }
+
+    public static function current_schema(): array {
+        return array(
+            'wp_fd_ucp_checkout_sessions' => array(
+                'columns' => array( 'id', 'status', 'platform_id', 'idempotency_key', 'idempotency_hash', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY', 'status', 'wc_order_id', 'platform_idempotency' ),
+            ),
+            'wp_fd_ucp_carts'             => array(
+                'columns' => array( 'id', 'line_items', 'platform_id', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY' ),
+            ),
+            'wp_fd_ucp_payment_claims'    => array(
+                'columns' => array( 'claim_key', 'kind', 'checkout_id' ),
+                'indexes' => array( 'PRIMARY', 'checkout_id' ),
+            ),
+        );
+    }
+
+    public static function legacy_schema(): array {
+        return array(
+            'wp_fd_ucp_checkout_sessions' => array(
+                'columns' => array( 'id', 'status', 'session_token_hash', 'idempotency_key', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY', 'status', 'wc_order_id', 'idempotency_key' ),
+            ),
+            'wp_fd_ucp_carts'             => array(
+                'columns' => array( 'id', 'line_items', 'session_token_hash', 'ucp_version' ),
+                'indexes' => array( 'PRIMARY' ),
+            ),
+            'wp_fd_ucp_payment_claims'    => array(
+                'columns' => array( 'claim_key', 'kind', 'checkout_id' ),
+                'indexes' => array( 'PRIMARY', 'checkout_id' ),
+            ),
+        );
+    }
+
+    public function esc_like( string $text ): string {
+        return $text;
+    }
+
+    public function suppress_errors( bool $suppress = true ): bool {
+        return false;
+    }
+
+    private function show( string $query ) {
+        if ( preg_match( "/^SHOW TABLES LIKE '([^']+)'/", $query, $m ) ) {
+            return isset( $this->schema[ $m[1] ] ) ? $m[1] : null;
+        }
+        if ( preg_match( "/^SHOW COLUMNS FROM `([^`]+)` LIKE '([^']+)'/", $query, $m ) ) {
+            return in_array( $m[2], $this->schema[ $m[1] ]['columns'] ?? array(), true ) ? $m[2] : null;
+        }
+        if ( preg_match( "/^SHOW INDEX FROM `([^`]+)` WHERE Key_name = '([^']+)'/", $query, $m ) ) {
+            return in_array( $m[2], $this->schema[ $m[1] ]['indexes'] ?? array(), true ) ? $m[1] : null;
+        }
+        return false;
+    }
+
+    private function alter( string $query ): int|false {
+        $this->alters[] = $query;
+        if ( $this->fail_alters || ! preg_match( '/^ALTER TABLE `([^`]+)` (.+)$/', $query, $m ) || ! isset( $this->schema[ $m[1] ] ) ) {
+            return false;
+        }
+
+        $table = $this->schema[ $m[1] ];
+        foreach ( preg_split( '/,\s*(?=ADD |DROP )/', $m[2] ) as $clause ) {
+            if ( preg_match( '/^ADD COLUMN (\w+)/', $clause, $c ) ) {
+                if ( in_array( $c[1], $table['columns'], true ) ) {
+                    return false;
+                }
+                $table['columns'][] = $c[1];
+            } elseif ( preg_match( '/^ADD UNIQUE KEY (\w+)/', $clause, $c ) ) {
+                if ( in_array( $c[1], $table['indexes'], true ) ) {
+                    return false;
+                }
+                $table['indexes'][] = $c[1];
+            } elseif ( preg_match( '/^DROP INDEX (\w+)/', $clause, $c ) ) {
+                if ( ! in_array( $c[1], $table['indexes'], true ) ) {
+                    return false;
+                }
+                $table['indexes'] = array_values( array_diff( $table['indexes'], array( $c[1] ) ) );
+            } elseif ( preg_match( '/^DROP COLUMN (\w+)/', $clause, $c ) ) {
+                if ( ! in_array( $c[1], $table['columns'], true ) ) {
+                    return false;
+                }
+                $table['columns'] = array_values( array_diff( $table['columns'], array( $c[1] ) ) );
+            } else {
+                return false;
+            }
+        }
+
+        $this->schema[ $m[1] ] = $table;
+        return 0;
+    }
 
     public function get_charset_collate(): string {
         return '';
@@ -843,6 +943,9 @@ final class FD_Test_Wpdb {
     }
 
     public function get_var( string $query ) {
+        if ( 0 === strpos( $query, 'SHOW ' ) ) {
+            return $this->show( $query );
+        }
         $this->calls[] = $query;
         if ( false !== strpos( $query, 'fd_ucp_payment_claims' ) ) {
             preg_match( "/claim_key = '([0-9a-f]+)'/", $query, $m );
@@ -878,6 +981,9 @@ final class FD_Test_Wpdb {
     }
 
     public function query( string $query ): int|false {
+        if ( 0 === strpos( $query, 'ALTER TABLE' ) ) {
+            return $this->alter( $query );
+        }
         preg_match( "/VALUES \('([0-9a-f]+)', '[^']*', '([^']*)'/", $query, $m );
         if ( isset( $this->claims[ $m[1] ] ) ) {
             return 0;
@@ -886,7 +992,10 @@ final class FD_Test_Wpdb {
         return 1;
     }
 
-    public function insert( string $table, array $data ): int {
+    public function insert( string $table, array $data ): int|false {
+        if ( $this->fail_inserts ) {
+            return false;
+        }
         $rows                = &$this->table( $table );
         $rows[ $data['id'] ] = $data;
         return 1;

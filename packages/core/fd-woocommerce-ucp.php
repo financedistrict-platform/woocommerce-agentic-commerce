@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 define( 'FD_UCP_VERSION', '0.3.10' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'FD_UCP_DB_VERSION', '1.5.0' );
+define( 'FD_UCP_DB_VERSION', '1.6.0' );
 
 require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-registry.php';
 require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-installer.php';
