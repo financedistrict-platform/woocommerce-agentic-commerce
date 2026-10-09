@@ -3,169 +3,186 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_Prism_Validator {
 
-    /**
-     * Validate an x402 credential against stored Prism payment requirements.
-     * Returns true on success, WP_Error on failure.
-     */
-    public static function validate_credential( $credential, ?array $payment_meta ): true|WP_Error {
-        $summary = self::extract_signed_summary( $credential );
-        if ( ! $summary ) {
+    private const AUTHORIZATION_FIELDS = array( 'from', 'to', 'value', 'validAfter', 'validBefore', 'nonce' );
+    private const REQUIREMENT_FIELDS   = array( 'scheme', 'network', 'asset', 'payTo', 'amount' );
+    private const NONCE_PATTERN        = '/^0x[0-9a-fA-F]{64}$/';
+    private const CLOCK_SKEW_SECONDS   = 30;
+    private const X402_VERSION         = 2;
+    private const SCHEME               = 'exact';
+    private const NETWORK_PREFIX       = 'eip155:';
+
+    public static function verify( $credential, $stored_config ): array|WP_Error {
+        $quote = self::parse_quote( $stored_config );
+        if ( ! $quote ) {
+            return new WP_Error( 'missing_payment_requirements', 'No stored payment requirements to validate against' );
+        }
+
+        $payload = self::read_payment_payload( $credential );
+        if ( ! $payload ) {
+            return new WP_Error( 'invalid_credential', 'Invalid x402 credential format' );
+        }
+
+        if ( $payload['x402Version'] !== $quote['x402Version'] ) {
+            return new WP_Error( 'version_mismatch', 'Credential x402 version does not match the stored payment requirements' );
+        }
+
+        $accepted = $payload['accepted'];
+        if ( array_key_exists( 'network', $payload ) && $payload['network'] !== $accepted['network'] ) {
+            return new WP_Error( 'network_mismatch', 'Credential network does not match its accepted requirements' );
+        }
+
+        $requirement = self::match_stored_requirement( $accepted, $quote['accepts'] );
+        if ( ! $requirement ) {
+            return new WP_Error( 'no_matching_accept', 'Accepted requirements do not match any stored payment requirement' );
+        }
+
+        if ( array_key_exists( 'resource', $payload )
+            && ( $payload['resource']['url'] ?? null ) !== $quote['resource']['url']
+        ) {
+            return new WP_Error( 'resource_mismatch', 'Credential resource does not match this checkout' );
+        }
+
+        $authorization = $payload['payload']['authorization'];
+
+        if ( 0 !== strcasecmp( $authorization['to'], $requirement['payTo'] ) ) {
+            return new WP_Error( 'recipient_mismatch', 'Signed payment recipient does not match the expected payTo address' );
+        }
+
+        if ( $authorization['value'] !== $requirement['amount'] ) {
             return new WP_Error(
-                'invalid_credential',
-                'Could not extract payment summary from credential'
+                'amount_mismatch',
+                "Signed amount ({$authorization['value']}) does not equal the required amount ({$requirement['amount']})"
             );
         }
 
-        $stored_accepts = self::read_stored_accepts( $payment_meta );
-        if ( ! $stored_accepts ) {
-            return new WP_Error(
-                'missing_payment_requirements',
-                'No stored payment requirements to validate against'
-            );
+        $now = time();
+        if ( (int) $authorization['validAfter'] > $now + self::CLOCK_SKEW_SECONDS ) {
+            return new WP_Error( 'authorization_not_yet_valid', 'Signed payment is not valid yet' );
+        }
+        if ( (int) $authorization['validBefore'] <= $now ) {
+            return new WP_Error( 'authorization_expired', 'Signed payment has expired' );
         }
 
-        return self::validate_against_stored( $summary, $stored_accepts );
-    }
-
-    /**
-     * Extract { network, asset, value, to } from an x402 credential.
-     * Handles multiple wire formats: base64 string, nested paymentPayload, flat object.
-     */
-    public static function extract_signed_summary( $credential ): ?array {
-        $decoded = self::decode_to_array( $credential );
-        if ( ! $decoded ) {
-            return null;
-        }
-
-        // Format: { paymentPayload: { network, payload: { authorization: { to, value } } } }
-        $payload = $decoded['paymentPayload'] ?? null;
-        if ( is_array( $payload ) ) {
-            $auth = $payload['payload']['authorization'] ?? null;
-            if ( is_array( $auth ) ) {
-                $accepted = $payload['accepted'] ?? array();
-                return array(
-                    'network' => $payload['network'] ?? $accepted['network'] ?? '',
-                    'asset'   => $decoded['paymentRequirements']['asset']
-                        ?? $accepted['asset'] ?? $payload['payload']['asset'] ?? '',
-                    'value'   => (string) ( $auth['value'] ?? '0' ),
-                    'to'      => $auth['to'] ?? '',
-                    'from'    => $auth['from'] ?? '',
-                );
-            }
-        }
-
-        // Format: flat { network, asset, value, to }
-        if ( isset( $decoded['network'], $decoded['value'] ) ) {
-            return array(
-                'network' => $decoded['network'],
-                'asset'   => $decoded['asset'] ?? '',
-                'value'   => (string) $decoded['value'],
-                'to'      => $decoded['to'] ?? '',
-                'from'    => $decoded['from'] ?? '',
-            );
-        }
-
-        return null;
-    }
-
-    /**
-     * Read the stored accepts[] entries from Prism checkout data.
-     */
-    private static function read_stored_accepts( ?array $payment_meta ): ?array {
-        $prism = $payment_meta['xyz.fd.prism_payment'] ?? null;
-        if ( ! $prism ) {
-            return null;
-        }
-
-        $ucp = $prism['ucp'] ?? null;
-        if ( ! is_array( $ucp ) ) {
-            return null;
-        }
-
-        // Look for accepts in the nested handler config
-        foreach ( $ucp as $entries ) {
-            if ( ! is_array( $entries ) ) {
-                continue;
-            }
-            foreach ( (array) $entries as $entry ) {
-                if ( isset( $entry['config']['accepts'] ) ) {
-                    return $entry['config']['accepts'];
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Validate extracted summary against stored accepts.
-     */
-    private static function validate_against_stored( array $summary, array $accepts ): true|WP_Error {
-        foreach ( $accepts as $accept ) {
-            // Match on network
-            if ( $accept['network'] !== $summary['network'] ) {
-                continue;
-            }
-
-            // Match on asset (case-insensitive for checksum addresses)
-            if ( isset( $accept['asset'] ) && $summary['asset']
-                && 0 !== strcasecmp( $accept['asset'], $summary['asset'] )
-            ) {
-                continue;
-            }
-
-            // Match on recipient
-            if ( isset( $accept['payTo'] ) && $summary['to']
-                && 0 !== strcasecmp( $accept['payTo'], $summary['to'] )
-            ) {
-                return new WP_Error(
-                    'recipient_mismatch',
-                    'Signed payment recipient does not match the expected payTo address'
-                );
-            }
-
-            // Match on amount (BigInt comparison via bccomp)
-            $stored_amount = (string) ( $accept['amount'] ?? '0' );
-            $signed_amount = $summary['value'];
-
-            if ( function_exists( 'bccomp' ) ) {
-                $cmp = bccomp( $signed_amount, $stored_amount );
-            } elseif ( function_exists( 'gmp_cmp' ) ) {
-                $cmp = gmp_cmp( $signed_amount, $stored_amount );
-            } else {
-                $max_len = max( strlen( $signed_amount ), strlen( $stored_amount ) );
-                $cmp = strcmp(
-                    str_pad( $signed_amount, $max_len, '0', STR_PAD_LEFT ),
-                    str_pad( $stored_amount, $max_len, '0', STR_PAD_LEFT )
-                );
-            }
-            if ( $cmp < 0 ) {
-                return new WP_Error(
-                    'amount_too_low',
-                    "Signed amount ($signed_amount) is less than required ($stored_amount)"
-                );
-            }
-
-            return true;
-        }
-
-        // No matching accept entry found — could be a different network/asset
-        return new WP_Error(
-            'no_matching_accept',
-            "No stored payment requirement matches network={$summary['network']}"
+        return array(
+            'x402_version'         => $quote['x402Version'],
+            'payment_requirements' => $requirement,
+            'payment_payload'      => array(
+                'x402Version' => $quote['x402Version'],
+                'resource'    => $quote['resource'],
+                'accepted'    => $requirement,
+                'payload'     => array(
+                    'signature'     => $payload['payload']['signature'],
+                    'authorization' => array_intersect_key( $authorization, array_flip( self::AUTHORIZATION_FIELDS ) ),
+                ),
+            ),
+            'payer'                => $authorization['from'],
+            'value'                => $authorization['value'],
         );
+    }
+
+    public static function parse_quote( $config ): ?array {
+        if ( ! is_array( $config )
+            || self::X402_VERSION !== ( $config['x402Version'] ?? null )
+            || ! self::is_filled_string( $config['resource']['url'] ?? null )
+            || ! is_array( $config['accepts'] ?? null )
+        ) {
+            return null;
+        }
+
+        $accepts = array_values( array_filter( $config['accepts'], array( self::class, 'is_settleable_requirement' ) ) );
+        if ( array() === $accepts ) {
+            return null;
+        }
+
+        $config['accepts'] = $accepts;
+        return $config;
+    }
+
+    private static function read_payment_payload( $credential ): ?array {
+        $decoded = self::decode_to_array( $credential );
+        if ( is_array( $decoded ) && isset( $decoded['authorization'] ) && ! isset( $decoded['paymentPayload'] ) ) {
+            $decoded = self::decode_to_array( $decoded['authorization'] );
+        }
+        if ( ! is_array( $decoded ) || isset( $decoded['authorization'] ) ) {
+            return null;
+        }
+
+        if ( isset( $decoded['paymentPayload'] ) && isset( $decoded['accepted'] ) ) {
+            return null;
+        }
+
+        $payload = $decoded['paymentPayload'] ?? $decoded;
+        if ( ! is_array( $payload )
+            || ! is_int( $payload['x402Version'] ?? null )
+            || ! self::is_requirement( $payload['accepted'] ?? null )
+            || ! self::is_filled_string( $payload['payload']['signature'] ?? null )
+            || ! is_array( $payload['payload']['authorization'] ?? null )
+        ) {
+            return null;
+        }
+
+        $authorization = $payload['payload']['authorization'];
+        foreach ( self::AUTHORIZATION_FIELDS as $field ) {
+            if ( ! self::is_filled_string( $authorization[ $field ] ?? null ) ) {
+                return null;
+            }
+        }
+        foreach ( array( 'value', 'validAfter', 'validBefore' ) as $field ) {
+            if ( ! ctype_digit( $authorization[ $field ] ) ) {
+                return null;
+            }
+        }
+        if ( ! preg_match( self::NONCE_PATTERN, $authorization['nonce'] ) ) {
+            return null;
+        }
+
+        return $payload;
+    }
+
+    private static function match_stored_requirement( array $accepted, array $stored ): ?array {
+        foreach ( $stored as $requirement ) {
+            if ( $accepted['scheme'] === $requirement['scheme']
+                && $accepted['network'] === $requirement['network']
+                && 0 === strcasecmp( $accepted['asset'], $requirement['asset'] )
+                && 0 === strcasecmp( $accepted['payTo'], $requirement['payTo'] )
+                && $accepted['amount'] === $requirement['amount']
+            ) {
+                return $requirement;
+            }
+        }
+        return null;
+    }
+
+    private static function is_requirement( $requirement ): bool {
+        if ( ! is_array( $requirement ) ) {
+            return false;
+        }
+        foreach ( self::REQUIREMENT_FIELDS as $field ) {
+            if ( ! self::is_filled_string( $requirement[ $field ] ?? null ) ) {
+                return false;
+            }
+        }
+        return ctype_digit( $requirement['amount'] );
+    }
+
+    private static function is_settleable_requirement( $requirement ): bool {
+        return self::is_requirement( $requirement )
+            && self::SCHEME === $requirement['scheme']
+            && str_starts_with( $requirement['network'], self::NETWORK_PREFIX );
+    }
+
+    private static function is_filled_string( $value ): bool {
+        return is_string( $value ) && '' !== $value;
     }
 
     private static function decode_to_array( $input ): ?array {
         if ( is_array( $input ) ) {
             return $input;
         }
-
         if ( ! is_string( $input ) ) {
             return null;
         }
 
-        // Try base64
         $b64 = base64_decode( $input, true );
         if ( $b64 ) {
             $parsed = json_decode( $b64, true );
@@ -174,12 +191,7 @@ class FD_Prism_Validator {
             }
         }
 
-        // Try direct JSON
         $parsed = json_decode( $input, true );
-        if ( is_array( $parsed ) ) {
-            return $parsed;
-        }
-
-        return null;
+        return is_array( $parsed ) ? $parsed : null;
     }
 }

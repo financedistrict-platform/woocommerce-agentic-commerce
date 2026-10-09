@@ -26,14 +26,11 @@ class FD_Prism_Client {
         ) );
     }
 
-    public function settle( array $x402_authorization ): ?array {
-        $version = (int) ( $x402_authorization['x402Version']
-            ?? $x402_authorization['paymentPayload']['x402Version'] ?? 2 );
-        $body = array(
-            'paymentPayload'      => $x402_authorization['paymentPayload'] ?? $x402_authorization,
-            'paymentRequirements' => $x402_authorization['paymentRequirements'] ?? null,
-        );
-        return $this->post( "/api/v{$version}/payment/settle", $body );
+    public function settle( int $x402_version, array $payment_payload, array $payment_requirements ): ?array {
+        return $this->post( "/api/v{$x402_version}/payment/settle", array(
+            'paymentPayload'      => $payment_payload,
+            'paymentRequirements' => $payment_requirements,
+        ) );
     }
 
     private function get( string $path ): ?array {
