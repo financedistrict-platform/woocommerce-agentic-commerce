@@ -6,6 +6,14 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
     private const HANDLER_ID = 'xyz.fd.dummy_payment';
     private const HANDLER_NS = 'xyz.fd.dummy_payment';
 
+    private const ALLOWED_ENVIRONMENTS = array( 'local', 'development' );
+
+    public static function enabled(): bool {
+        return defined( 'FD_DUMMY_PAYMENT_ENABLED' )
+            && true === constant( 'FD_DUMMY_PAYMENT_ENABLED' )
+            && in_array( wp_get_environment_type(), self::ALLOWED_ENVIRONMENTS, true );
+    }
+
     public function id(): string {
         return self::HANDLER_ID;
     }
@@ -15,28 +23,7 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
     }
 
     public function get_ucp_discovery_handlers(): array {
-        return array(
-            self::HANDLER_NS => array(
-                array(
-                    'id'                => 'dummy',
-                    'name'              => self::HANDLER_NS,
-                    'version'           => '2026-01-01',
-                    'type'              => 'custom',
-                    'schema'            => array(),
-                    'config'            => array(
-                        'description' => 'Dummy payment handler for testing. Always succeeds.',
-                        'accepts'     => array(
-                            array(
-                                'scheme'  => 'exact',
-                                'network' => 'dummy:testnet',
-                                'asset'   => 'DUMMY',
-                                'payTo'   => '0x0000000000000000000000000000000000000000',
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        );
+        return array();
     }
 
     public function prepare_checkout_payment( array $input ): ?array {
@@ -75,20 +62,19 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
     }
 
     public function settle_payment( array $input ): array {
-        $checkout_meta = $input['checkout_meta'] ?? null;
-        $stored = $checkout_meta[ self::HANDLER_ID ]['ucp'][ self::HANDLER_NS ][0]['config']['accepts'][0] ?? null;
+        if ( ! self::enabled() ) {
+            return array(
+                'success' => false,
+                'error'   => 'The test payment handler is disabled on this site',
+            );
+        }
 
-        if ( $stored ) {
-            $credential = $input['credential'] ?? array();
-            $submitted_amount = (string) ( $credential['amount'] ?? $credential['value'] ?? '0' );
-            $required_amount  = (string) ( $stored['amount'] ?? '0' );
-
-            if ( $required_amount !== '0' && $submitted_amount !== $required_amount ) {
-                return array(
-                    'success' => false,
-                    'error'   => "Amount mismatch: submitted $submitted_amount, required $required_amount",
-                );
-            }
+        $prepared_amount = $input['checkout_meta'][ self::HANDLER_ID ]['prepared_amount'] ?? null;
+        if ( ! is_int( $prepared_amount ) || $prepared_amount <= 0 ) {
+            return array(
+                'success' => false,
+                'error'   => 'No stored quote for this checkout',
+            );
         }
 
         $fake_tx = '0x' . bin2hex( random_bytes( 32 ) );
@@ -99,7 +85,7 @@ class FD_Dummy_Handler implements FD_Payment_Handler {
             'payment_method'        => 'fd_dummy_payment',
             'payment_method_title'  => 'Dummy Payment (Test)',
             'network'               => 'dummy:testnet',
-            'settled_amount'        => $checkout_meta[ self::HANDLER_ID ]['prepared_amount'] ?? null,
+            'settled_amount'        => $prepared_amount,
             'order_meta'            => array(
                 '_fd_dummy_tx_hash' => $fake_tx,
                 '_fd_dummy_network' => 'dummy:testnet',

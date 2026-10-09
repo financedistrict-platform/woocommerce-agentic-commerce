@@ -34,7 +34,7 @@ Finance District UCP turns any WooCommerce store into an AI-agent-ready storefro
 
 * **Core (fd-woocommerce-ucp)** — UCP protocol endpoints, checkout flow, catalog API
 * **Prism Payment (fd-woocommerce-prism)** — Stablecoin payment handler via Finance District Prism
-* **Dummy Payment (fd-woocommerce-dummy-payment)** — Test payment handler for development
+* **Dummy Payment (fd-woocommerce-dummy-payment)** — Test payment handler for local development only. Available from a git checkout, not shipped in release packages, and never active on a production site
 
 == Installation ==
 

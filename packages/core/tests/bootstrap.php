@@ -131,5 +131,7 @@ require_once $prism . '/includes/prism/class-fd-prism-client.php';
 require_once $prism . '/includes/prism/class-fd-prism-validator.php';
 require_once $prism . '/includes/prism/class-fd-prism-handler.php';
 
+require_once dirname( __DIR__, 2 ) . '/dummy-payment/fd-woocommerce-dummy-payment.php';
+
 require_once __DIR__ . '/support/golden-renderer.php';
 require_once __DIR__ . '/support/fixture-profile-fetcher.php';

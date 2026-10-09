@@ -26,14 +26,14 @@ function fd_dummy_payment_init() {
         return;
     }
 
-    if ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) {
+    require_once plugin_dir_path(__FILE__) . 'includes/class-fd-dummy-handler.php';
+
+    if ( ! FD_Dummy_Handler::enabled() ) {
         add_action( 'admin_notices', function () {
-            echo '<div class="error"><p><strong>' . esc_html__( 'Finance District Dummy Payment', 'fd-dummy-for-woocommerce' ) . '</strong> ' . esc_html__( 'is disabled because WP_DEBUG is off. This handler is for testing only and must not run in production.', 'fd-dummy-for-woocommerce' ) . '</p></div>';
+            echo '<div class="error"><p><strong>' . esc_html__( 'Finance District Dummy Payment', 'fd-dummy-for-woocommerce' ) . '</strong> ' . esc_html__( 'is disabled. This handler is for testing only. It runs only on a local or development site that sets FD_DUMMY_PAYMENT_ENABLED to true.', 'fd-dummy-for-woocommerce' ) . '</p></div>';
         } );
         return;
     }
-
-    require_once plugin_dir_path(__FILE__) . 'includes/class-fd-dummy-handler.php';
 
     add_action('fd_ucp_register_payment_handlers', function(FD_Payment_Registry $registry) {
         $registry->register(new FD_Dummy_Handler());

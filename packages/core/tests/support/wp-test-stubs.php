@@ -13,6 +13,7 @@ final class FD_Test_WP {
     public static array $http_queue = array();
     public static bool $live_http   = false;
     public static array $routes     = array();
+    public static string $environment = 'production';
 
     public static function reset(): void {
         self::$routes        = array();
@@ -26,6 +27,7 @@ final class FD_Test_WP {
         self::$http_response = null;
         self::$http_queue    = array();
         self::$live_http     = false;
+        self::$environment   = 'production';
         FD_UCP_Request_Context::set( null );
     }
 
@@ -129,6 +131,14 @@ function do_action( string $tag, ...$args ): void {
 
 function apply_filters( string $tag, $value, ...$args ) {
     return $value;
+}
+
+function wp_get_environment_type(): string {
+    return FD_Test_WP::$environment;
+}
+
+function plugin_dir_path( string $file ): string {
+    return dirname( $file ) . '/';
 }
 
 function wc_get_logger(): FD_Test_Logger {
