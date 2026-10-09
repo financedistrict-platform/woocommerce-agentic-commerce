@@ -165,7 +165,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertStringContainsString( $this->order()->get_order_key(), $data['continue_url'] );
         $hold = array_values( array_filter( $data['messages'], static fn( $m ) => 'payment_on_hold' === $m['code'] ) );
         $this->assertCount( 1, $hold );
-        $this->assertSame( 'info', $hold[0]['type'] );
+        $this->assertSame( 'error', $hold[0]['type'] );
         $this->assertSame( 'requires_buyer_review', $hold[0]['severity'] );
         $this->assertSame( 'on-hold', $this->order()->get_status() );
         $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
@@ -628,7 +628,21 @@ final class CheckoutTamperTest extends TestCase {
         $response = $this->complete();
 
         $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_requires_escalation', $response->get_data()['messages'][0]['code'] );
         $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_get_on_a_held_session_returns_the_hold_shape_to_its_owner_only(): void {
+        $this->db->sessions[ self::SESSION_ID ]['status'] = 'requires_escalation';
+        $this->order()->update_status( 'on-hold', 'held' );
+        $route = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID;
+
+        $owner = $this->controller()->get_session( self::request( $route, self::PLATFORM, array( 'id' => self::SESSION_ID ) ) );
+        $this->assertHeld( $owner );
+
+        $foreign = $this->controller()->get_session( self::request( $route, self::OTHER_PLATFORM, array( 'id' => self::SESSION_ID ) ) );
+        $this->assertSame( 404, $foreign->get_status(), json_encode( $foreign->get_data() ) );
+        $this->assertArrayNotHasKey( 'continue_url', $foreign->get_data() );
     }
 
     public function test_tax_inclusive_store_quotes_the_order_total_for_a_tax_free_destination(): void {

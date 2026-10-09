@@ -43,7 +43,22 @@ class FD_UCP_Wire_20260123 extends FD_UCP_Wire_Base {
     public function checkout_session( array $session, FD_Payment_Registry $registry ): array {
         $response = parent::checkout_session( $session, $registry );
         unset( $response['signals'], $response['attribution'] );
+        $response['totals'] = $this->unsigned_discounts( $response['totals'] );
+        foreach ( $response['line_items'] ?? array() as $i => $line_item ) {
+            if ( isset( $line_item['totals'] ) ) {
+                $response['line_items'][ $i ]['totals'] = $this->unsigned_discounts( $line_item['totals'] );
+            }
+        }
         return $response;
+    }
+
+    private function unsigned_discounts( ?array $totals ): ?array {
+        foreach ( $totals ?? array() as $i => $total ) {
+            if ( in_array( $total['type'] ?? '', array( 'discount', 'items_discount' ), true ) ) {
+                $totals[ $i ]['amount'] = abs( (int) $total['amount'] );
+            }
+        }
+        return $totals;
     }
 
     public function error( string $code, string $message ): array {

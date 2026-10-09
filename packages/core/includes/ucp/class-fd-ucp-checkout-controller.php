@@ -560,8 +560,11 @@ class FD_UCP_Checkout_Controller {
                 'wc_order_id' => $order->get_id(),
                 'updated_at'  => current_time( 'mysql', true ),
             ) );
+            $session['status']      = 'requires_escalation';
+            $session['wc_order_id'] = $order->get_id();
+
             return new WP_REST_Response(
-                FD_UCP_Formatter::format_hold_response( $session, $order, $this->registry ),
+                FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
                 200
             );
         }

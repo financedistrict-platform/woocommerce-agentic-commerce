@@ -39,6 +39,19 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
             'links'      => array(),
         );
 
+        if ( 'requires_escalation' === $status ) {
+            $response['messages'][] = array(
+                'type'     => 'error',
+                'code'     => 'payment_on_hold',
+                'content'  => 'Payment received but held for merchant review',
+                'severity' => 'requires_buyer_review',
+            );
+            $held = ! empty( $session['wc_order_id'] ) ? wc_get_order( (int) $session['wc_order_id'] ) : null;
+            if ( $held ) {
+                $response['continue_url'] = set_url_scheme( $held->get_checkout_order_received_url(), 'https' );
+            }
+        }
+
         if ( $buyer ) {
             $response['buyer'] = $buyer;
         }
@@ -70,20 +83,6 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
                 $response['order']['network'] = $network;
             }
         }
-
-        return $response;
-    }
-
-    public function hold_response( array $session, WC_Order $order, FD_Payment_Registry $registry ): array {
-        $response = $this->checkout_session( array_merge( $session, array( 'status' => 'requires_escalation' ) ), $registry );
-
-        $response['messages'][] = array(
-            'type'     => 'info',
-            'code'     => 'payment_on_hold',
-            'content'  => 'Payment received but held for merchant review',
-            'severity' => 'requires_buyer_review',
-        );
-        $response['continue_url'] = set_url_scheme( $order->get_checkout_order_received_url(), 'https' );
 
         return $response;
     }

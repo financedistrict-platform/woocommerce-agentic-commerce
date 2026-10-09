@@ -190,9 +190,10 @@ echo ""
 echo "5b. Discount"
 if [ -n "$UCP_COUPON_CODE" ]; then
   PROMO=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/promotions"     -H "Content-Type: application/json"     -d "{\"code\": \"$UCP_COUPON_CODE\"}")
-  DISCOUNT_NEGATIVE=$(echo "$PROMO" | json_get "print(any(t.get('type') == 'discount' and t.get('amount', 0) < 0 for t in d.get('totals', [])))")
-  assert_status "discount total is negative" "True" "$DISCOUNT_NEGATIVE"
-  DISCOUNT_IDENTITY=$(echo "$PROMO" | json_get "a = {t['type']: t['amount'] for t in d['totals']}; print(a['subtotal'] + a.get('fulfillment', 0) + a.get('tax', 0) + a['discount'] == a['total'])")
+  if [ "$EXPECT_VER" = "2026-01-23" ]; then DISCOUNT_SIGN=1; else DISCOUNT_SIGN=-1; fi
+  DISCOUNT_SIGNED=$(echo "$PROMO" | json_get "print(any(t.get('type') == 'discount' and t.get('amount', 0) * $DISCOUNT_SIGN > 0 for t in d.get('totals', [])))")
+  assert_status "discount total has the sign of version $EXPECT_VER" "True" "$DISCOUNT_SIGNED"
+  DISCOUNT_IDENTITY=$(echo "$PROMO" | json_get "a = {t['type']: t['amount'] for t in d['totals']}; print(a['subtotal'] + a.get('fulfillment', 0) + a.get('tax', 0) - abs(a['discount']) == a['total'])")
   assert_status "total equals subtotal plus fulfillment plus tax plus discount" "True" "$DISCOUNT_IDENTITY"
 else
   skip "discount (set UCP_COUPON_CODE)"
@@ -208,6 +209,7 @@ if [ -n "$UCP_HOLD_SESSION_ID" ] && [ -n "$UCP_HOLD_COMPLETE_BODY" ]; then
   assert_status "held payment answers 200" "200" "$HOLD_STATUS"
   assert_status "held payment requires escalation" "requires_escalation" "$(json_get "print(d.get('status',''))" < "$HOLD_FILE")"
   assert_status "held payment carries a review message" "requires_buyer_review" "$(json_get "print(next((m.get('severity') for m in d.get('messages', []) if m.get('code') == 'payment_on_hold'), ''))" < "$HOLD_FILE")"
+  assert_status "held payment message is an error" "error" "$(json_get "print(next((m.get('type') for m in d.get('messages', []) if m.get('code') == 'payment_on_hold'), ''))" < "$HOLD_FILE")"
   assert_status "held payment continues over https" "True" "$(json_get "print(d.get('continue_url', '').startswith('https://'))" < "$HOLD_FILE")"
   rm -f "$HOLD_FILE"
 else
