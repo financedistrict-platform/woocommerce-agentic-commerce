@@ -3,6 +3,8 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 UCP_API="$BASE_URL/wp-json/fd-ucp/v1"
+UCP_PROFILE="${UCP_PROFILE:-https://fd.xyz/.well-known/ucp}"
+UCP_API_KEY="${UCP_API_KEY:-}"
 PRODUCT_ID="${1:-42}"
 PASS=0
 FAIL=0
@@ -18,6 +20,10 @@ assert_eq() {
 assert_not_empty() {
   local label="$1" value="$2"
   if [ -n "$value" ] && [ "$value" != "null" ]; then pass "$label"; else fail "$label" "value is empty/null"; fi
+}
+
+ucp_curl() {
+  curl -H "UCP-Agent: profile=\"$UCP_PROFILE\"" -H "X-API-Key: $UCP_API_KEY" "$@"
 }
 
 assert_gt() {
@@ -60,13 +66,9 @@ echo ""
 
 echo "2. Checkout — payment requirements"
 
-HDRS=$(mktemp)
-trap 'rm -f "$HDRS"' EXIT
-SESSION=$(curl -s -D "$HDRS" -X POST "$UCP_API/checkout-sessions" \
+SESSION=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
-  -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"' \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
-SESSION_TOKEN=$(tr -d '\r' < "$HDRS" | awk -F': ' 'tolower($1)=="ucp-session-token"{print $2}')
 
 SESSION_ID=$(echo "$SESSION" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 assert_not_empty "checkout session created" "$SESSION_ID"
@@ -132,10 +134,8 @@ echo ""
 
 echo "5. Amount recalculation on update"
 
-UPDATED=$(curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
+UPDATED=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
   -H "Content-Type: application/json" \
-  -H "UCP-Session-Token: $SESSION_TOKEN" \
-  -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"' \
   -d "{
     \"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 2}],
     \"buyer\": {\"email\": \"prism-test@example.com\"},
@@ -169,10 +169,8 @@ echo ""
 
 echo "6. Cancel — payment handlers removed"
 
-CANCELED=$(curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/cancel" \
-  -H "Content-Type: application/json" \
-  -H "UCP-Session-Token: $SESSION_TOKEN" \
-  -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"')
+CANCELED=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/cancel" \
+  -H "Content-Type: application/json")
 
 CANCEL_STATUS=$(echo "$CANCELED" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
 assert_eq "session canceled" "canceled" "$CANCEL_STATUS"

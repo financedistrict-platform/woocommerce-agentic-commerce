@@ -3,6 +3,13 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 UCP_API="$BASE_URL/wp-json/fd-ucp/v1"
+UCP_PROFILE="${UCP_PROFILE:-https://fd.xyz/.well-known/ucp}"
+UCP_API_KEY="${UCP_API_KEY:-}"
+
+ucp_curl() {
+  curl -H "UCP-Agent: profile=\"$UCP_PROFILE\"" -H "X-API-Key: $UCP_API_KEY" "$@"
+}
+
 PRODUCT_ID="${1:-42}"
 PASS=0
 FAIL=0
@@ -54,7 +61,7 @@ echo ""
 
 echo "3. Checkout — payment requirements"
 
-SESSION=$(curl -s -X POST "$UCP_API/checkout-sessions" \
+SESSION=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
 
@@ -102,7 +109,7 @@ echo ""
 
 echo "5. Amount recalculation on update"
 
-UPDATED=$(curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
+UPDATED=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
   -H "Content-Type: application/json" \
   -d "{
     \"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 3}],
@@ -137,7 +144,7 @@ echo ""
 
 echo "6. Complete — dummy settlement"
 
-COMPLETED=$(curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete" \
+COMPLETED=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete" \
   -H "Content-Type: application/json" \
   -d "{
     \"payment\": {
