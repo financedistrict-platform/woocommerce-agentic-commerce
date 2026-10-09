@@ -307,4 +307,28 @@ final class PrismTamperTest extends TestCase {
 
         $this->assertRejectedBeforeSettle( $result );
     }
+
+    public function test_storefront_checkout_never_offers_the_prism_gateway(): void {
+        $GLOBALS['fd_test_options']['woocommerce_fd_prism_x402_settings'] = array(
+            'enabled' => 'yes',
+            'api_url' => self::GW,
+            'api_key' => 'key',
+        );
+
+        $gateway = new FD_Prism_Gateway();
+
+        $this->assertSame( 'yes', $gateway->enabled );
+        $this->assertFalse( $gateway->is_available() );
+    }
+
+    public function test_storefront_checkout_never_reports_a_payment_as_taken(): void {
+        $GLOBALS['fd_test_notices'] = array();
+
+        $result = ( new FD_Prism_Gateway() )->process_payment( 123 );
+
+        $this->assertSame( 'failure', $result['result'] );
+        $this->assertArrayNotHasKey( 'redirect', $result );
+        $this->assertCount( 1, $GLOBALS['fd_test_notices'] );
+        $this->assertSame( 'error', $GLOBALS['fd_test_notices'][0]['type'] );
+    }
 }

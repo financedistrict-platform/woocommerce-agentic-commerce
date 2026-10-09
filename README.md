@@ -121,6 +121,8 @@ It is not advertised in `/.well-known/ucp`; agents pick it from the checkout ses
 3. Enter your **Prism Gateway URL** and **API Key**
 4. Save
 
+Prism Stablecoin is paid only by AI agents through the UCP checkout. It is never offered at the regular store checkout, even when enabled.
+
 ### UCP versions
 
 **WooCommerce > Settings > Advanced > UCP versions** sets which Universal Commerce Protocol (UCP) versions agents can use.
