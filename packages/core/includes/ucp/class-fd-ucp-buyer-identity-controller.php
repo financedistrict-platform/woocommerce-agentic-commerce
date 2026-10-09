@@ -12,12 +12,12 @@ class FD_UCP_Buyer_Identity_Controller {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'PUT',
 				'callback'            => array( $this, 'update_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 	}

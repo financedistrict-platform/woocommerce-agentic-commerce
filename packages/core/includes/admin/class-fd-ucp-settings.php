@@ -66,7 +66,7 @@ class FD_UCP_Settings {
             array(
                 'title' => __( 'Platform access', 'fd-ucp-for-woocommerce' ),
                 'type'  => 'title',
-                'desc'  => __( 'AI agents that do not sign their requests need a key registered for their platform profile. They send it in the X-API-Key header together with the UCP-Agent header.', 'fd-ucp-for-woocommerce' ),
+                'desc'  => __( 'AI agents that do not sign their requests need a key registered for their platform profile. They send it in the X-API-Key header together with the UCP-Agent header. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the agent you are onboarding.', 'fd-ucp-for-woocommerce' ),
                 'id'    => 'fd_ucp_platform_access',
             ),
             array(

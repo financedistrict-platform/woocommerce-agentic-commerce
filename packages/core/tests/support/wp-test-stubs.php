@@ -65,7 +65,7 @@ function add_option( string $key, $value = '', $deprecated = '', $autoload = nul
 
 function register_rest_route( string $namespace, string $route, array $args = array() ): bool {
     foreach ( isset( $args['methods'] ) ? array( $args ) : $args as $endpoint ) {
-        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'] );
+        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'], 'permission_callback' => $endpoint['permission_callback'] ?? null );
     }
     return true;
 }
@@ -554,7 +554,9 @@ function wp_generate_uuid4(): string {
 
 function wc_create_order( array $args = array() ): WC_Order {
     FD_Test_Order_Store::$created++;
-    return new WC_Order();
+    $order                       = new WC_Order();
+    FD_Test_Order_Store::$made[] = $order;
+    return $order;
 }
 
 function wc_get_order( $id ) {
@@ -582,6 +584,7 @@ function wc_create_refund( array $args ) {
 }
 
 final class FD_Test_Order_Store {
+    public static array $made   = array();
     public static int $created  = 0;
     public static array $orders  = array();
     public static array $refunds = array();
@@ -595,6 +598,7 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
         private string $route;
         private string $method;
         private string $body;
+        public array $form = array();
 
         public function __construct( string $route = '/fd-ucp/v1', array $headers = array(), array $params = array(), array $json = array(), string $method = 'GET', ?string $body = null ) {
             $this->route   = $route;
@@ -621,6 +625,10 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
 
         public function get_body(): string {
             return $this->body;
+        }
+
+        public function get_body_params(): array {
+            return $this->form;
         }
 
         public function get_param( string $name ) {

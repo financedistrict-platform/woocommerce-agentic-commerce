@@ -18,12 +18,12 @@ class FD_UCP_Returns_Controller {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'create_return' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'list_returns' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 	}

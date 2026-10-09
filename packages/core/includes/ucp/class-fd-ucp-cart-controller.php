@@ -10,31 +10,31 @@ class FD_UCP_Cart_Controller {
 		register_rest_route( self::NAMESPACE, '/carts', array(
 			'methods'             => 'POST',
 			'callback'            => array( $this, 'create_cart' ),
-			'permission_callback' => '__return_true',
+			'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 		) );
 
 		register_rest_route( self::NAMESPACE, '/carts/(?P<id>[a-f0-9-]+)', array(
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_cart' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'PUT',
 				'callback'            => array( $this, 'update_cart' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'DELETE',
 				'callback'            => array( $this, 'delete_cart' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 
 		register_rest_route( self::NAMESPACE, '/carts/(?P<id>[a-f0-9-]+)/checkout', array(
 			'methods'             => 'POST',
 			'callback'            => array( $this, 'checkout' ),
-			'permission_callback' => '__return_true',
+			'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 		) );
 	}
 

@@ -251,4 +251,50 @@ final class PlatformAuthSignatureTest extends TestCase {
             FD_Test_Platform_Vectors::auth()->authenticate( $request )
         );
     }
+
+    public function test_the_profile_is_fetched_from_the_declared_url_and_identified_by_the_normalised_one(): void {
+        $declared = 'HTTPS://Platform.Example:443/.well-known/ucp/';
+        $fetcher  = new FD_Test_Fixture_Profile_Fetcher( array( $declared => FD_Test_Platform_Vectors::profile_body() ) );
+
+        $result = FD_Test_Platform_Vectors::auth( $fetcher )->authenticate( FD_Test_Platform_Vectors::signed( 'es256_get_unnormalised' ) );
+
+        $this->assertSame( array( 'platform_id' => FD_Test_Platform_Vectors::PROFILE ), $result );
+        $this->assertSame( array( $declared ), $fetcher->requested );
+    }
+
+    public function test_a_key_with_a_point_off_the_curve_fails_without_a_php_warning(): void {
+        $keys = array( array(
+            'kid' => 'platform-es256', 'kty' => 'EC', 'crv' => 'P-256', 'use' => 'sig',
+            'x'   => rtrim( strtr( base64_encode( str_repeat( "\x01", 32 ) ), '+/', '-_' ), '=' ),
+            'y'   => rtrim( strtr( base64_encode( str_repeat( "\x02", 32 ) ), '+/', '-_' ), '=' ),
+        ) );
+        $warnings = array();
+        set_error_handler( static function ( int $no, string $message ) use ( &$warnings ): bool {
+            $warnings[] = $message;
+            return true;
+        } );
+
+        $result = FD_Test_Platform_Vectors::auth( FD_Test_Platform_Vectors::fetcher( $keys ) )->authenticate( FD_Test_Platform_Vectors::signed( 'es256_get' ) );
+        restore_error_handler();
+
+        $this->assert_error( $result, 'signature_invalid', 401 );
+        $this->assertSame( array(), $warnings );
+    }
+
+    public function test_form_parameters_cannot_ride_on_a_request_without_a_signed_body(): void {
+        $request       = FD_Test_Platform_Vectors::signed( 'es256_get' );
+        $request->form = array( 'id' => 'another-session' );
+
+        $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $request ), 'signature_invalid', 401 );
+    }
+
+    public function test_the_last_duplicate_dictionary_member_wins(): void {
+        $valid = FD_Test_Platform_Vectors::data()['es256_get']['signature'];
+
+        $last_valid  = FD_Test_Platform_Vectors::signed( 'es256_get', array( 'signature' => 'sig1=:AAAA:, ' . $valid ) );
+        $first_valid = FD_Test_Platform_Vectors::signed( 'es256_get', array( 'signature' => $valid . ', sig1=:AAAA:' ) );
+
+        $this->assertArrayHasKey( 'platform_id', FD_Test_Platform_Vectors::auth()->authenticate( $last_valid ) );
+        $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $first_valid ), 'signature_invalid', 401 );
+    }
 }

@@ -17,32 +17,32 @@ class FD_UCP_Checkout_Controller {
         register_rest_route( self::NAMESPACE, '/checkout-sessions', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'create_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)', array(
             array(
                 'methods'             => 'GET',
                 'callback'            => array( $this, 'get_session' ),
-                'permission_callback' => '__return_true',
+                'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
             ),
             array(
                 'methods'             => 'PUT',
                 'callback'            => array( $this, 'update_session' ),
-                'permission_callback' => '__return_true',
+                'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
             ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)/complete', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'complete_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/checkout-sessions/(?P<id>[a-f0-9-]+)/cancel', array(
             'methods'             => 'POST',
             'callback'            => array( $this, 'cancel_session' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
     }
 
@@ -57,7 +57,10 @@ class FD_UCP_Checkout_Controller {
         }
 
         $idempotency_key = $request->get_header( 'idempotency-key' );
-        $body_hash       = hash( 'sha256', (string) $request->get_body() );
+        if ( $idempotency_key && strlen( $idempotency_key ) > 128 ) {
+            return FD_UCP_Error::response( 'invalid_idempotency_key', 'Idempotency-Key must be at most 128 characters', 400 );
+        }
+        $body_hash = hash( 'sha256', (string) $request->get_body() );
         if ( $idempotency_key ) {
             $existing = $this->load_session_by_idempotency_key( $idempotency_key );
             if ( $existing ) {
@@ -145,6 +148,7 @@ class FD_UCP_Checkout_Controller {
         ) );
 
         if ( ! $stored ) {
+            $quote['order']->update_status( 'cancelled', 'UCP checkout session could not be stored.' );
             $existing = $idempotency_key ? $this->load_session_by_idempotency_key( $idempotency_key ) : null;
             if ( $existing ) {
                 return $this->replay_session( $request, $existing, $body_hash );

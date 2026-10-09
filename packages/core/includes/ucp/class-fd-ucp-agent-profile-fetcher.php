@@ -7,6 +7,7 @@ class FD_UCP_Agent_Profile_Fetcher {
     public const CACHE_TTL   = 600;
     public const MAX_BYTES   = 131072;
     public const TIMEOUT     = 3;
+    public const REFRESH_INTERVAL = 60;
 
     private bool $allow_loopback;
     private bool $fetched = false;
@@ -33,9 +34,11 @@ class FD_UCP_Agent_Profile_Fetcher {
     }
 
     public function refresh( string $url ): array {
-        if ( $this->fetched ) {
+        $throttle = 'fd_ucp_profile_refresh_' . md5( $url );
+        if ( $this->fetched || false !== get_transient( $throttle ) ) {
             return $this->lookup( $url );
         }
+        set_transient( $throttle, 1, self::REFRESH_INTERVAL );
         $this->fetched = true;
 
         $result = $this->fetch( $url );

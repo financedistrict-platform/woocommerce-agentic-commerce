@@ -9,13 +9,13 @@ class FD_UCP_Order_Controller {
         register_rest_route( self::NAMESPACE, '/orders', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'list_orders' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
 
         register_rest_route( self::NAMESPACE, '/orders/(?P<id>[\d]+)', array(
             'methods'             => 'GET',
             'callback'            => array( $this, 'get_order' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
         ) );
     }
 
@@ -27,7 +27,6 @@ class FD_UCP_Order_Controller {
         $limit  = min( (int) ( $request->get_param( 'limit' ) ?? 20 ), 50 );
         $offset = max( (int) ( $request->get_param( 'offset' ) ?? 0 ), 0 );
 
-        // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- filtering UCP orders by platform
         $orders = wc_get_orders( array(
             'limit'      => $limit,
             'offset'     => $offset,

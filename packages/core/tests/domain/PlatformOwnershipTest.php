@@ -269,4 +269,61 @@ final class PlatformOwnershipTest extends TestCase {
             $this->assertNull( $gated, $path );
         }
     }
+
+    public function test_route_case_and_trailing_slash_cannot_skip_the_gate(): void {
+        $agent = array( 'UCP-Agent' => 'profile="' . self::ALPHA . '"' );
+        foreach ( array( '/FD-UCP/V1/checkout-sessions', '/Fd-Ucp/v1/carts', '/fd-ucp/V1/orders/1001', '/fd-ucp/v1/carts/', 'fd-ucp/v1/carts' ) as $route ) {
+            $gated = FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( $route, $agent, array(), array(), 'POST' ) );
+
+            $this->assertInstanceOf( WP_REST_Response::class, $gated, $route );
+            $this->assertSame( 401, $gated->get_status(), $route );
+        }
+    }
+
+    public function test_mixed_case_catalog_routes_stay_public(): void {
+        foreach ( array( '/Fd-Ucp/V1/Catalog/SEARCH', '/FD-UCP/v1/catalog/lookup/' ) as $route ) {
+            $this->assertNull( FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( $route, array(), array(), array(), 'POST' ) ), $route );
+        }
+    }
+
+    public function test_every_protected_route_fails_closed_even_if_the_gate_is_skipped(): void {
+        FD_UCP_Request_Context::set( null );
+        $checked = 0;
+
+        foreach ( FD_Test_WP::$routes as $route ) {
+            if ( in_array( 'POST ' . $route['route'], self::PUBLIC_ROUTES, true ) ) {
+                continue;
+            }
+            $this->assertNotNull( $route['permission_callback'], $route['route'] );
+
+            $denied = call_user_func( $route['permission_callback'] );
+            $this->assertInstanceOf( WP_Error::class, $denied, $route['route'] );
+            $this->assertSame( 'signature_missing', $denied->get_error_code(), $route['route'] );
+
+            FD_UCP_Request_Context::set( FD_UCP_Request_Context::current()->with_platform( self::ALPHA ) );
+            $this->assertTrue( call_user_func( $route['permission_callback'] ), $route['route'] );
+            FD_UCP_Request_Context::set( null );
+            ++$checked;
+        }
+
+        $this->assertGreaterThanOrEqual( 15, $checked );
+    }
+
+    public function test_an_oversized_idempotency_key_is_refused_before_anything_is_created(): void {
+        $response = $this->dispatch( 'POST', '/checkout-sessions', self::as_alpha() + array( 'Idempotency-Key' => str_repeat( 'k', 129 ) ), array(), self::item_body() );
+
+        $this->assertSame( 400, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_a_session_that_cannot_be_stored_does_not_leave_its_quote_order_open(): void {
+        FD_Test_Order_Store::$made = array();
+        $this->db->fail_inserts    = true;
+
+        $response = $this->dispatch( 'POST', '/checkout-sessions', self::as_alpha(), array(), self::item_body() );
+
+        $this->assertSame( 503, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertCount( 1, FD_Test_Order_Store::$made );
+        $this->assertSame( 'cancelled', FD_Test_Order_Store::$made[0]->status );
+    }
 }

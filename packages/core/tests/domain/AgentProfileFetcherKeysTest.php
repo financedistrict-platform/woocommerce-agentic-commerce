@@ -77,4 +77,18 @@ final class AgentProfileFetcherKeysTest extends TestCase {
         $this->assertTrue( $down->refresh( self::URL )['failed'] );
         $this->assertSame( 'k1', $down->lookup( self::URL )['keys'][0]['kid'] );
     }
+
+    public function test_refresh_is_throttled_across_requests(): void {
+        $cached = new FD_Test_Fixture_Profile_Fetcher( array( self::URL => $this->profile( array( array( 'kid' => 'old' ) ) ) ) );
+        $cached->lookup( self::URL );
+
+        $first = new FD_Test_Fixture_Profile_Fetcher( array( self::URL => $this->profile( array( array( 'kid' => 'new' ) ) ) ) );
+        $first->refresh( self::URL );
+        $second = new FD_Test_Fixture_Profile_Fetcher( array( self::URL => $this->profile( array( array( 'kid' => 'newer' ) ) ) ) );
+        $result = $second->refresh( self::URL );
+
+        $this->assertCount( 1, $first->requested );
+        $this->assertCount( 0, $second->requested );
+        $this->assertSame( 'new', $result['keys'][0]['kid'] );
+    }
 }

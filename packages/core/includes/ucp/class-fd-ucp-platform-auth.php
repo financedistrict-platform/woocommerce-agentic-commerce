@@ -42,13 +42,14 @@ final class FD_UCP_Platform_Auth {
     }
 
     public function authenticate( WP_REST_Request $request ): array {
-        $profile = self::normalise_profile_url( (string) FD_UCP_Version_Resolver::profile_url( $request->get_header( 'ucp-agent' ) ) );
+        $declared = (string) FD_UCP_Version_Resolver::profile_url( $request->get_header( 'ucp-agent' ) );
+        $profile  = self::normalise_profile_url( $declared );
         if ( null === $profile ) {
             return self::failure( 'invalid_profile_url', 400, 'UCP-Agent must carry the https profile URL of the calling platform' );
         }
 
         if ( '' !== trim( (string) $request->get_header( 'signature-input' ) ) ) {
-            return $this->by_signature( $request, $profile );
+            return $this->by_signature( $request, $profile, $declared );
         }
 
         $key = trim( (string) $request->get_header( 'x-api-key' ) );
@@ -87,7 +88,7 @@ final class FD_UCP_Platform_Auth {
         return array( 'platform_id' => $profile );
     }
 
-    private function by_signature( WP_REST_Request $request, string $profile ): array {
+    private function by_signature( WP_REST_Request $request, string $profile, string $declared ): array {
         $method = strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) );
         if ( '' === $method || $method !== strtoupper( $request->get_method() ) ) {
             return self::failure( 'signature_invalid', 401, 'The request method does not match the signed method' );
@@ -102,7 +103,7 @@ final class FD_UCP_Platform_Auth {
 
         $first_error = null;
         foreach ( $labels as $label ) {
-            $outcome = $this->verify_member( $request, $profile, $method, $inputs[ $label ], $signatures[ $label ] );
+            $outcome = $this->verify_member( $request, $profile, $declared, $method, $inputs[ $label ], $signatures[ $label ] );
             if ( isset( $outcome['platform_id'] ) ) {
                 return $outcome;
             }
@@ -111,7 +112,7 @@ final class FD_UCP_Platform_Auth {
         return $first_error;
     }
 
-    private function verify_member( WP_REST_Request $request, string $profile, string $method, string $raw_input, string $raw_signature ): array {
+    private function verify_member( WP_REST_Request $request, string $profile, string $declared_url, string $method, string $raw_input, string $raw_signature ): array {
         $input = self::parse_signature_input( $raw_input );
         if ( null === $input ) {
             return self::failure( 'signature_invalid', 401, 'Signature-Input is malformed or uses unsupported components' );
@@ -132,7 +133,11 @@ final class FD_UCP_Platform_Auth {
             return $window;
         }
 
-        $body     = (string) $request->get_body();
+        $body = (string) $request->get_body();
+        if ( '' === $body && array() !== $request->get_body_params() ) {
+            return self::failure( 'signature_invalid', 401, 'A request without a signed body cannot carry form parameters' );
+        }
+
         $coverage = $this->coverage_error( $request, $input['components'], $body );
         if ( null !== $coverage ) {
             return $coverage;
@@ -153,7 +158,7 @@ final class FD_UCP_Platform_Auth {
             return self::failure( 'signature_invalid', 401, 'A signed component is missing from the request' );
         }
 
-        $key = $this->find_key( $profile, $keyid );
+        $key = $this->find_key( $declared_url, $keyid );
         if ( isset( $key['error'] ) ) {
             return $key;
         }
@@ -348,7 +353,14 @@ final class FD_UCP_Platform_Auth {
             . chunk_split( base64_encode( hex2bin( self::P256_SPKI_PREFIX ) . $jwk['public'] ), 64, "\n" )
             . "-----END PUBLIC KEY-----\n";
 
-        return 1 === openssl_verify( $base, self::der_signature( $signature ), $pem, OPENSSL_ALGO_SHA256 );
+        $public = openssl_pkey_get_public( $pem );
+        if ( false === $public ) {
+            while ( false !== openssl_error_string() ) {
+            }
+            return false;
+        }
+
+        return 1 === openssl_verify( $base, self::der_signature( $signature ), $public, OPENSSL_ALGO_SHA256 );
     }
 
     private static function der_signature( string $raw ): string {
@@ -431,7 +443,7 @@ final class FD_UCP_Platform_Auth {
             return;
         }
         $label = substr( $member, 0, $cut );
-        if ( preg_match( '/^[a-z*][a-z0-9_.*\-]*$/', $label ) && ! isset( $members[ $label ] ) ) {
+        if ( preg_match( '/^[a-z*][a-z0-9_.*\-]*$/', $label ) ) {
             $members[ $label ] = trim( substr( $member, $cut + 1 ) );
         }
     }

@@ -73,7 +73,7 @@ class FD_UCP_Plugin {
     }
 
     public function gate_request( $result, $server, WP_REST_Request $request ) {
-        $route = $request->get_route();
+        $route = self::canonical_route( $request->get_route() );
         if ( null !== $result || 0 !== strpos( $route, self::REST_PREFIX ) ) {
             return $result;
         }
@@ -109,6 +109,17 @@ class FD_UCP_Plugin {
         }
 
         return $result;
+    }
+
+    public static function canonical_route( string $route ): string {
+        return '/' . trim( strtolower( $route ), '/' );
+    }
+
+    public static function require_platform() {
+        if ( '' === FD_UCP_Request_Context::current()->platform_id() ) {
+            return new WP_Error( 'signature_missing', 'A verified platform is required', array( 'status' => 401 ) );
+        }
+        return true;
     }
 
     public function pin_session( WP_REST_Request $request, ?string $pinned ): ?WP_REST_Response {
