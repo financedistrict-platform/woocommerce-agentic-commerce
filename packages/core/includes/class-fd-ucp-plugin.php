@@ -6,6 +6,11 @@ class FD_UCP_Plugin {
     private static ?FD_UCP_Plugin $instance = null;
     private const REST_PREFIX = '/fd-ucp/v1';
 
+    private const PUBLIC_ROUTES = array(
+        '/fd-ucp/v1/catalog/search',
+        '/fd-ucp/v1/catalog/lookup',
+    );
+
     private const VERSIONED_ROUTES = array(
         '/fd-ucp/v1/carts'   => 'cart',
         '/fd-ucp/v1/catalog' => 'catalog.search',
@@ -14,6 +19,8 @@ class FD_UCP_Plugin {
     private FD_Payment_Registry $payment_registry;
     private string $store_name;
     private ?FD_UCP_Version_Resolver $resolver = null;
+    private ?FD_UCP_Agent_Profile_Fetcher $fetcher = null;
+    private ?FD_UCP_Platform_Auth $platform_auth = null;
 
     public static function instance(): self {
         if ( null === self::$instance ) {
@@ -79,10 +86,20 @@ class FD_UCP_Plugin {
             return FD_UCP_Error::response( 'configuration_invalid', 'UCP configuration is invalid', 500 );
         }
 
+        $platform_id = '';
+        if ( ! in_array( $route, self::PUBLIC_ROUTES, true ) ) {
+            $auth = $this->platform_auth()->authenticate( $request );
+            if ( isset( $auth['error'] ) ) {
+                return FD_UCP_Error::response( $auth['error']['code'], $auth['error']['message'], $auth['error']['status'] );
+            }
+            $platform_id = $auth['platform_id'];
+        }
+
         $context = $this->resolver()->resolve( $request->get_header( 'ucp-agent' ) );
         if ( null !== $context->rejection() ) {
             return $context->rejection_response();
         }
+        $context = $context->with_platform( $platform_id );
         FD_UCP_Request_Context::set( $context );
 
         foreach ( self::VERSIONED_ROUTES as $prefix => $capability ) {
@@ -99,15 +116,29 @@ class FD_UCP_Plugin {
         if ( null !== $context->rejection() ) {
             return $context->rejection_response();
         }
-        FD_UCP_Request_Context::set( $context );
+        FD_UCP_Request_Context::set( $context->with_platform( FD_UCP_Request_Context::current()->platform_id() ) );
         return null;
     }
 
     public function resolver(): FD_UCP_Version_Resolver {
         if ( null === $this->resolver ) {
-            $this->resolver = new FD_UCP_Version_Resolver( FD_UCP_Version_Registry::from_options(), new FD_UCP_Agent_Profile_Fetcher() );
+            $this->resolver = new FD_UCP_Version_Resolver( FD_UCP_Version_Registry::from_options(), $this->fetcher() );
         }
         return $this->resolver;
+    }
+
+    public function platform_auth(): FD_UCP_Platform_Auth {
+        if ( null === $this->platform_auth ) {
+            $this->platform_auth = new FD_UCP_Platform_Auth( $this->fetcher() );
+        }
+        return $this->platform_auth;
+    }
+
+    private function fetcher(): FD_UCP_Agent_Profile_Fetcher {
+        if ( null === $this->fetcher ) {
+            $this->fetcher = new FD_UCP_Agent_Profile_Fetcher();
+        }
+        return $this->fetcher;
     }
 
     public function configuration_notice(): void {
