@@ -326,6 +326,7 @@ packages/
 
 - **Early order creation** — WooCommerce orders are created at checkout session time with `pending` status, so the order number is available in payment descriptions before settlement occurs.
 - **Handler fan-out** — Multiple payment handlers can coexist. The registry calls `prepare_checkout_payment` on all handlers during session creation; the agent selects which handler to pay with at complete time.
+- **One payment, one checkout** — Before an order is marked paid, the core records the payment in a unique-key table (`fd_ucp_payment_claims`). A transaction reference can complete only one checkout session, and the Prism handler also records each signed authorization (network, token, payer, nonce) before asking Prism to settle. A payment that was already used by another session is rejected, or the order is put on hold when the settlement has already happened. Retrying the same session is allowed.
 - **No WC cart dependency** — Checkout sessions use a transient WC cart for price calculation only. Sessions are stored in a dedicated database table, not in WC sessions.
 
 ### Staging Environment

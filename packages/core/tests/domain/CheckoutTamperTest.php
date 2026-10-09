@@ -544,6 +544,53 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
+    public function test_complete_claims_the_settled_transaction_before_marking_paid(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame(
+            self::SESSION_ID,
+            $this->db->claims[ FD_Payment_Claims::key( FD_Payment_Claims::KIND_TRANSACTION, '0xfeed' ) ] ?? null
+        );
+    }
+
+    public function test_complete_holds_the_order_when_the_transaction_already_paid_another_session(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->db->claims[ FD_Payment_Claims::key( FD_Payment_Claims::KIND_TRANSACTION, '0xFEED' ) ] = 'another-session';
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+        $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_complete_accepts_a_transaction_already_claimed_by_the_same_session(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->db->claims[ FD_Payment_Claims::key( FD_Payment_Claims::KIND_TRANSACTION, '0xfeed' ) ] = self::SESSION_ID;
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_complete_holds_the_order_when_the_settlement_has_no_transaction_reference(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        unset( $this->handler->result['transaction_reference'] );
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+    }
+
     public function test_held_session_cannot_be_completed_again(): void {
         $this->quoted_session( 4695, 4695, self::untaxed_totals() );
         $this->db->sessions[ self::SESSION_ID ]['status'] = 'requires_escalation';

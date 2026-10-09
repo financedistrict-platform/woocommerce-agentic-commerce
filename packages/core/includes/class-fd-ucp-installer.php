@@ -66,6 +66,15 @@ class FD_UCP_Installer {
             updated_at DATETIME NULL,
             expires_at DATETIME NULL,
             PRIMARY KEY (id)
+        ) $charset;
+
+        CREATE TABLE {$wpdb->prefix}fd_ucp_payment_claims (
+            claim_key CHAR(64) NOT NULL,
+            kind VARCHAR(16) NOT NULL,
+            checkout_id VARCHAR(64) NOT NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (claim_key),
+            KEY checkout_id (checkout_id)
         ) $charset;";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';

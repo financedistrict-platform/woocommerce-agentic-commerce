@@ -96,6 +96,7 @@ require_once $base . '/ucp/class-fd-ucp-address.php';
 require_once $base . '/ucp/class-fd-ucp-status.php';
 require_once $base . '/payment/interface-fd-payment-handler.php';
 require_once $base . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $base . '/payment/class-fd-payment-claims.php';
 require_once $base . '/payment/class-fd-payment-registry.php';
 require_once $base . '/ucp/interface-fd-ucp-wire-format.php';
 require_once $base . '/ucp/wire/class-fd-ucp-wire-base.php';

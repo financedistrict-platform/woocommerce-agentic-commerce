@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 define( 'FD_UCP_VERSION', '0.3.10' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'FD_UCP_DB_VERSION', '1.4.0' );
+define( 'FD_UCP_DB_VERSION', '1.5.0' );
 
 require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-registry.php';
 require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-installer.php';
@@ -54,6 +54,7 @@ function fd_ucp_init() {
 
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/interface-fd-payment-handler.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/interface-fd-versioned-payment-handler.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/payment/class-fd-payment-claims.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/class-fd-payment-registry.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/interface-fd-ucp-wire-format.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/wire/class-fd-ucp-wire-base.php';

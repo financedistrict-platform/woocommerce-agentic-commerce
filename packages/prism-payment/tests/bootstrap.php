@@ -158,6 +158,44 @@ if ( ! class_exists( 'WC_Payment_Gateway' ) ) {
     }
 }
 
+if ( ! function_exists( 'current_time' ) ) {
+    function current_time( string $type, $gmt = 0 ): string {
+        return '2026-04-20 10:07:00';
+    }
+}
+
+if ( ! class_exists( 'FD_Test_Claims_Wpdb' ) ) {
+    final class FD_Test_Claims_Wpdb {
+        public string $prefix = 'wp_';
+        public array $claims  = array();
+        public bool $broken   = false;
+
+        public function prepare( string $query, ...$args ): string {
+            return vsprintf( str_replace( '%s', "'%s'", $query ), $args );
+        }
+
+        public string $last_error = '';
+
+        public function query( string $query ): int|false {
+            if ( $this->broken ) {
+                $this->last_error = 'store unavailable';
+                return false;
+            }
+            preg_match( "/VALUES \('([0-9a-f]+)', '[^']*', '([^']*)'/", $query, $m );
+            if ( isset( $this->claims[ $m[1] ] ) ) {
+                return 0;
+            }
+            $this->claims[ $m[1] ] = $m[2];
+            return 1;
+        }
+
+        public function get_var( string $query ) {
+            preg_match( "/claim_key = '([0-9a-f]+)'/", $query, $m );
+            return $this->broken ? null : ( $this->claims[ $m[1] ?? '' ] ?? null );
+        }
+    }
+}
+
 if ( ! defined( 'FD_PRISM_VERSION' ) ) {
     preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-prism.php' ), $fd_prism_version );
     define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
@@ -170,6 +208,7 @@ $core = dirname( __DIR__, 2 ) . '/core/includes';
 require_once $base . '/prism/class-fd-prism-validator.php';
 require_once $core . '/payment/interface-fd-payment-handler.php';
 require_once $core . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $core . '/payment/class-fd-payment-claims.php';
 require_once $core . '/payment/class-fd-payment-registry.php';
 require_once $core . '/ucp/interface-fd-ucp-wire-format.php';
 require_once $core . '/ucp/wire/class-fd-ucp-wire-base.php';

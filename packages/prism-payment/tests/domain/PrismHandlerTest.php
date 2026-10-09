@@ -10,6 +10,7 @@ final class PrismHandlerTest extends TestCase {
     private const CURRENT_VERSION = FD_UCP_Version_Registry::DEFAULT_CURRENT;
 
     protected function setUp(): void {
+        $GLOBALS['wpdb']                  = new FD_Test_Claims_Wpdb();
         $GLOBALS['fd_test_transients']    = array();
         $GLOBALS['fd_test_options']       = array();
         $GLOBALS['fd_test_requests']      = array();
