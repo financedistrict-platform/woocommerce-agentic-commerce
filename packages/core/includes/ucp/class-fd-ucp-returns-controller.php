@@ -14,7 +14,7 @@ class FD_UCP_Returns_Controller {
 	}
 
 	public function register_routes(): void {
-		register_rest_route( self::NAMESPACE, '/orders/(?P<id>[\d]+)/returns', array(
+		register_rest_route( self::NAMESPACE, '/orders/(?P<id>[A-Za-z0-9_\-]+)/returns', array(
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'create_return' ),
@@ -114,19 +114,6 @@ class FD_UCP_Returns_Controller {
 	}
 
 	private function resolve_order( WP_REST_Request $request ): WC_Order|WP_REST_Response {
-		$order = wc_get_order( (int) $request->get_param( 'id' ) );
-		if ( ! $order ) {
-			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
-		}
-
-		if ( ! $order->get_meta( '_fd_ucp_handler_id' ) ) {
-			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
-		}
-
-		if ( ! FD_UCP_Ownership::owns_order( $order ) ) {
-			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
-		}
-
-		return $order;
+		return FD_UCP_Order_Controller::resolve( (string) $request->get_param( 'id' ) );
 	}
 }

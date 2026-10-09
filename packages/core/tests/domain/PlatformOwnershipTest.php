@@ -10,6 +10,7 @@ final class PlatformOwnershipTest extends TestCase {
     private const BETA       = 'https://beta.example/ucp';
     private const ALPHA_KEY  = 'alpha-registered-key';
     private const BETA_KEY   = 'beta-registered-key';
+    private const ORDER_KEY  = 'wc_order_Zk3q9XvT1aBcD';
 
     private const PUBLIC_ROUTES = array( 'POST /catalog/search', 'POST /catalog/lookup' );
 
@@ -71,6 +72,7 @@ final class PlatformOwnershipTest extends TestCase {
             '_fd_ucp_handler_id'   => 'xyz.fd.prism_payment',
             '_fd_ucp_platform_id'  => $platform,
         );
+        $order->order_key             = self::ORDER_KEY;
         $order->status                = 'processing';
         FD_Test_Order_Store::$orders  = array( 1001 => $order );
         FD_Test_Order_Store::$refunds = array();
@@ -120,7 +122,7 @@ final class PlatformOwnershipTest extends TestCase {
     }
 
     private static function concrete( string $route ): array {
-        $id = str_starts_with( $route, '/orders' ) ? 1001 : self::SESSION_ID;
+        $id = str_starts_with( $route, '/orders' ) ? self::ORDER_KEY : self::SESSION_ID;
         return array( preg_replace( '/\(\?P<id>[^)]+\)/', (string) $id, $route ), $id );
     }
 
@@ -239,15 +241,47 @@ final class PlatformOwnershipTest extends TestCase {
     }
 
     public function test_returns_still_answer_accepted_for_the_owning_platform(): void {
-        $response = $this->dispatch( 'POST', '/orders/1001/returns', self::as_alpha(), array( 'id' => 1001 ), array( 'items' => array() ) );
+        $response = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) );
 
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+    }
+
+    public function test_the_owning_platform_reads_its_order_by_the_opaque_key(): void {
+        $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::as_alpha(), array( 'id' => self::ORDER_KEY ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( self::ORDER_KEY, $response->get_data()['id'] );
+    }
+
+    public function test_another_platform_and_unknown_keys_get_not_found_for_orders_and_returns(): void {
+        $cases = array(
+            array( self::as_beta(), self::ORDER_KEY ),
+            array( self::as_alpha(), 'wc_order_unknownkey' ),
+            array( self::as_alpha(), '1001' ),
+        );
+        foreach ( $cases as [ $headers, $key ] ) {
+            foreach ( array( '/orders/' . $key, '/orders/' . $key . '/returns' ) as $path ) {
+                $response = $this->dispatch( 'GET', $path, $headers, array( 'id' => $key ) );
+
+                $this->assertSame( 404, $response->get_status(), $path );
+                $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] ?? null, $path );
+            }
+        }
+    }
+
+    public function test_the_order_list_route_does_not_exist(): void {
+        FD_Test_WP::$routes = array();
+        FD_UCP_Plugin::instance()->register_rest_routes();
+
+        $listing = array_filter( FD_Test_WP::$routes, static fn( array $route ): bool => '/orders' === $route['route'] );
+
+        $this->assertSame( array(), array_values( $listing ) );
     }
 
     public function test_the_return_rate_limit_still_applies(): void {
         $statuses = array();
         for ( $i = 0; $i < 11; $i++ ) {
-            $statuses[] = $this->dispatch( 'POST', '/orders/1001/returns', self::as_alpha(), array( 'id' => 1001 ), array( 'items' => array() ) )->get_status();
+            $statuses[] = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) )->get_status();
         }
 
         $this->assertSame( 429, end( $statuses ) );

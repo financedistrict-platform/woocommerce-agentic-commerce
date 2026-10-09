@@ -57,7 +57,7 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
         $response['status'] = 'completed';
 
         $response['order'] = array(
-            'id'            => (string) $order->get_id(),
+            'id'            => $order->get_order_key(),
             'label'         => $order->get_order_number(),
             'permalink_url' => $order->get_view_order_url(),
         );

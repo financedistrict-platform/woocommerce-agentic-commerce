@@ -191,12 +191,13 @@ CANCEL_STATUS=$(echo "$CANCEL" | python3 -c "import json,sys; print(json.load(sy
 assert_status "cancel session" "canceled" "$CANCEL_STATUS"
 echo ""
 
-# ── 7. Orders List ────────────────────────────────────────────
+# ── 7. Orders ─────────────────────────────────────────────────
 
 echo "7. Orders"
-ORDERS=$(ucp_curl -s "$UCP_API/orders")
-ORDER_STATUS=$(echo "$ORDERS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ucp',{}).get('status',''))" 2>/dev/null || true)
-assert_status "list orders endpoint returns success" "success" "$ORDER_STATUS"
+ORDERS_LIST_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders")
+assert_status "orders cannot be listed" "404" "$ORDERS_LIST_STATUS"
+UNKNOWN_ORDER_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders/wc_order_doesnotexist")
+assert_status "unknown order key returns 404" "404" "$UNKNOWN_ORDER_STATUS"
 echo ""
 
 # ── 8. Cart Delete ────────────────────────────────────────────
