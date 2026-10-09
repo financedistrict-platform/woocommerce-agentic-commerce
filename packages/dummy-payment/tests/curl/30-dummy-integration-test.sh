@@ -168,6 +168,13 @@ assert_eq "order network is dummy:testnet" "dummy:testnet" "$ORDER_NETWORK"
 
 ORDER_ID=$(echo "$COMPLETED" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['id'])" 2>/dev/null)
 assert_not_empty "WooCommerce order created" "$ORDER_ID"
+assert_eq "order id is the opaque order key" "wc_order_" "${ORDER_ID:0:9}"
+
+ORDER_GET=$(ucp_curl -s "$UCP_API/orders/$ORDER_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+assert_eq "order is retrievable by its id" "$ORDER_ID" "$ORDER_GET"
+
+ORDER_LIST_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders")
+assert_eq "orders cannot be listed" "404" "$ORDER_LIST_STATUS"
 
 echo ""
 

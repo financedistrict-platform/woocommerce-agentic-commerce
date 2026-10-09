@@ -127,7 +127,7 @@ class FD_UCP_Formatter {
                 'version' => FD_UCP_Request_Context::current()->version(),
                 'status'  => 'success',
             ),
-            'id'         => (string) $order->get_id(),
+            'id'         => $order->get_order_key(),
             'label'      => $order->get_order_number(),
             'status'     => self::wc_order_status_to_ucp( $order->get_status() ),
             'currency'   => $order->get_currency(),

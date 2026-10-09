@@ -166,7 +166,7 @@ The verified profile URL (lower-case host, no fragment, no trailing slash) is th
 | Cart or checkout session could not be stored | `503 storage_unavailable` |
 
 An `Idempotency-Key` is scoped to the calling platform: repeating it with the same body returns the stored session (`200`), another platform using the same value gets its own session.
-`POST /orders/{id}/returns` records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
+`POST /orders/{id}/returns` (with the opaque order id) records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
 
 ### Prism Console Setup
 
@@ -219,6 +219,8 @@ Items are priced at the current catalog price on create, on every update and aga
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/wp-json/fd-ucp/v1/orders/{id}` | Get order details |
+
+`{id}` is the opaque order id returned by `complete` (the WooCommerce order key, `wc_order_...`), never the sequential order number. Orders cannot be listed: there is no `GET /orders`. An unknown id and an order created by another platform both answer `404 order_not_found`. The curl suites under `packages/*/tests/curl` need the demo store to be seeded with a platform key first.
 
 ### UCP Capabilities
 

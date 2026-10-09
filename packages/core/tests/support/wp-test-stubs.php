@@ -563,19 +563,13 @@ function wc_get_order( $id ) {
     return FD_Test_Order_Store::$orders[ (int) $id ] ?? null;
 }
 
-function wc_get_orders( array $args ): array {
-    return array_values( array_filter(
-        FD_Test_Order_Store::$orders,
-        static function ( WC_Order $order ) use ( $args ): bool {
-            foreach ( $args['meta_query'] ?? array() as $clause ) {
-                $value = $order->get_meta( $clause['key'] );
-                if ( 'EXISTS' === ( $clause['compare'] ?? '' ) ? '' === $value : $value !== $clause['value'] ) {
-                    return false;
-                }
-            }
-            return true;
+function wc_get_order_id_by_order_key( string $key ): int {
+    foreach ( FD_Test_Order_Store::$orders as $id => $order ) {
+        if ( $order->get_order_key() === $key ) {
+            return (int) $id;
         }
-    ) );
+    }
+    return 0;
 }
 
 function wc_create_refund( array $args ) {
@@ -646,6 +640,7 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
 }
 
 class WC_Order {
+    public string $order_key = 'wc_order_Zk3q9XvT1aBcD';
     public array $meta   = array();
     public array $calls  = array();
     public array $items  = array();
@@ -672,6 +667,10 @@ class WC_Order {
 
     public function get_order_number(): string {
         return '1001';
+    }
+
+    public function get_order_key(): string {
+        return $this->order_key;
     }
 
     public function get_view_order_url(): string {

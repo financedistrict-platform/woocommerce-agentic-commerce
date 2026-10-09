@@ -787,30 +787,10 @@ final class CheckoutTamperTest extends TestCase {
     }
 
     #[DataProvider( 'foreign_platforms' )]
-    public function test_order_list_does_not_return_other_platforms_orders( ?string $platform ): void {
-        FD_Test_Order_Store::$orders[1002] = self::owned_order( self::OTHER_PLATFORM, '0xtheirs' );
-        self::as_platform( $platform );
-
-        $response = ( new FD_UCP_Order_Controller() )->list_orders( new WP_REST_Request( '/fd-ucp/v1/orders', array( 'UCP-Agent' => '' ) ) );
-
-        $this->assertStringNotContainsString( '0xmine', json_encode( $response->get_data() ) );
-        $this->assertSame( self::OTHER_PLATFORM === $platform, str_contains( json_encode( $response->get_data() ), '0xtheirs' ) );
-    }
-
-    public function test_order_list_returns_only_the_orders_of_the_calling_platform(): void {
-        FD_Test_Order_Store::$orders[1002] = self::owned_order( self::OTHER_PLATFORM, '0xtheirs' );
-
-        $response = ( new FD_UCP_Order_Controller() )->list_orders( self::request( '/fd-ucp/v1/orders', self::PLATFORM ) );
-
-        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
-        $this->assertSame( array( '0xmine' ), array_column( $response->get_data()['orders'], 'transaction_reference' ) );
-    }
-
-    #[DataProvider( 'foreign_platforms' )]
     public function test_order_get_rejects_a_foreign_platform( ?string $platform ): void {
         self::as_platform( $platform );
 
-        $response = ( new FD_UCP_Order_Controller() )->get_order( new WP_REST_Request( '/fd-ucp/v1/orders/1001', array( 'UCP-Agent' => '' ), array( 'id' => 1001 ) ) );
+        $response = ( new FD_UCP_Order_Controller() )->get_order( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD', array( 'UCP-Agent' => '' ), array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 404, $response->get_status() );
     }
@@ -818,11 +798,9 @@ final class CheckoutTamperTest extends TestCase {
     public function test_order_without_a_stored_platform_is_unreachable(): void {
         $this->order()->meta = array( '_fd_ucp_handler_id' => 'xyz.fd.prism_payment', '_fd_ucp_tx_reference' => '0xmine' );
 
-        $get  = ( new FD_UCP_Order_Controller() )->get_order( self::request( '/fd-ucp/v1/orders/1001', self::PLATFORM, array( 'id' => 1001 ) ) );
-        $list = ( new FD_UCP_Order_Controller() )->list_orders( self::request( '/fd-ucp/v1/orders', self::PLATFORM ) );
+        $get = ( new FD_UCP_Order_Controller() )->get_order( self::request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD', self::PLATFORM, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 404, $get->get_status() );
-        $this->assertStringNotContainsString( '0xmine', json_encode( $list->get_data() ) );
     }
 
     #[DataProvider( 'foreign_platforms' )]
@@ -832,8 +810,8 @@ final class CheckoutTamperTest extends TestCase {
         $headers               = array( 'UCP-Agent' => '' );
         self::as_platform( $platform );
 
-        $create = $controller->create_return( new WP_REST_Request( '/fd-ucp/v1/orders/1001/returns', $headers, array( 'id' => 1001 ) ) );
-        $list   = $controller->list_returns( new WP_REST_Request( '/fd-ucp/v1/orders/1001/returns', $headers, array( 'id' => 1001 ) ) );
+        $create = $controller->create_return( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', $headers, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
+        $list   = $controller->list_returns( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', $headers, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 404, $create->get_status() );
         $this->assertSame( 404, $list->get_status() );
@@ -844,7 +822,7 @@ final class CheckoutTamperTest extends TestCase {
     public function test_owner_return_request_records_no_refund(): void {
         $this->order()->status = 'processing';
 
-        $response = ( new FD_UCP_Returns_Controller() )->create_return( self::request( '/fd-ucp/v1/orders/1001/returns', self::PLATFORM, array( 'id' => 1001 ) ) );
+        $response = ( new FD_UCP_Returns_Controller() )->create_return( self::request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', self::PLATFORM, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'requested', $response->get_data()['return']['status'] );
@@ -909,9 +887,9 @@ final class CheckoutTamperTest extends TestCase {
 
     public function test_owner_sees_the_recorded_return_request(): void {
         $controller = new FD_UCP_Returns_Controller();
-        $controller->create_return( self::request( '/fd-ucp/v1/orders/1001/returns', self::PLATFORM, array( 'id' => 1001 ) ) );
+        $controller->create_return( self::request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', self::PLATFORM, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
-        $response = $controller->list_returns( self::request( '/fd-ucp/v1/orders/1001/returns', self::PLATFORM, array( 'id' => 1001 ) ) );
+        $response = $controller->list_returns( self::request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', self::PLATFORM, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( array( 'requested' ), array_column( $response->get_data()['returns'], 'status' ) );

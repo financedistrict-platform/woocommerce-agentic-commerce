@@ -3,7 +3,7 @@ set -euo pipefail
 . "$(dirname "$0")/00-config.sh"
 
 if [ -z "${ORDER_ID:-}" ]; then
-  echo "Usage: ORDER_ID=<id> $0 [line_item_id] [quantity]"
+  echo "Usage: ORDER_ID=<order id from the complete response> $0 [line_item_id] [quantity]"
   echo "  Without args: return request for the whole order"
   echo "  With args:    return request for one line item"
   exit 1
