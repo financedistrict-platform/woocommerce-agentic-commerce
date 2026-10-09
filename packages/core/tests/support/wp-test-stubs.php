@@ -12,8 +12,10 @@ final class FD_Test_WP {
     public static $http_response    = null;
     public static array $http_queue = array();
     public static bool $live_http   = false;
+    public static array $routes     = array();
 
     public static function reset(): void {
+        self::$routes        = array();
         self::$options       = array();
         self::$transients    = array();
         self::$cache         = array();
@@ -53,6 +55,13 @@ function add_option( string $key, $value = '', $deprecated = '', $autoload = nul
         return false;
     }
     FD_Test_WP::$options[ $key ] = $value;
+    return true;
+}
+
+function register_rest_route( string $namespace, string $route, array $args = array() ): bool {
+    foreach ( isset( $args['methods'] ) ? array( $args ) : $args as $endpoint ) {
+        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'] );
+    }
     return true;
 }
 
@@ -493,6 +502,10 @@ class WC_Order {
 
     public function get_total_tax(): string {
         return number_format( $this->tax, 2, '.', '' );
+    }
+
+    public function get_refunds(): array {
+        return array();
     }
 
     public function needs_payment(): bool {

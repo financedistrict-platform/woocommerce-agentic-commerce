@@ -781,6 +781,59 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( hash( 'sha256', $token ), $this->db->sessions[ $checkout->get_data()['checkout_session_id'] ]['session_token_hash'] ?? null );
     }
 
+    public function test_owner_sees_the_recorded_return_request(): void {
+        $controller = new FD_UCP_Returns_Controller();
+        $controller->create_return( self::request( '/fd-ucp/v1/orders/1001/returns', self::TOKEN, array( 'id' => 1001 ) ) );
+
+        $response = $controller->list_returns( self::request( '/fd-ucp/v1/orders/1001/returns', self::TOKEN, array( 'id' => 1001 ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'requested' ), array_column( $response->get_data()['returns'], 'status' ) );
+    }
+
+    public function test_every_route_except_the_public_ones_refuses_a_request_without_the_session_token(): void {
+        $public = array(
+            'POST /catalog/search',
+            'POST /catalog/lookup',
+            'POST /checkout-sessions',
+            'POST /carts',
+            'POST /promotions/validate',
+        );
+        $this->db->carts[ self::SESSION_ID ] = array(
+            'id'                 => self::SESSION_ID,
+            'line_items'         => json_encode( array() ),
+            'session_token_hash' => hash( 'sha256', self::TOKEN ),
+            'ucp_version'        => null,
+        );
+        FD_UCP_Plugin::instance()->register_rest_routes();
+
+        $guarded = array();
+        foreach ( FD_Test_WP::$routes as $route ) {
+            foreach ( (array) explode( ',', $route['methods'] ) as $method ) {
+                $name = trim( $method ) . ' ' . $route['route'];
+                if ( in_array( $name, $public, true ) ) {
+                    continue;
+                }
+                $id       = str_starts_with( $route['route'], '/orders' ) ? 1001 : self::SESSION_ID;
+                $path     = preg_replace( '/\(\?P<id>[^)]+\)/', (string) $id, $route['route'] );
+                $response = call_user_func( $route['callback'], new WP_REST_Request(
+                    '/fd-ucp/v1' . $path,
+                    array( 'UCP-Agent' => '' ),
+                    array( 'id' => $id ),
+                    array( 'code' => 'SAVE10', 'items' => array(), 'buyer' => array( 'first_name' => 'Eve' ) )
+                ) );
+                $this->assertContains( $response->get_status(), array( 401, 403, 404 ), $name );
+                $guarded[] = $name;
+            }
+        }
+
+        $this->assertCount( 15, $guarded, implode( ', ', $guarded ) );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( array(), FD_Test_Order_Store::$refunds );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts );
+    }
+
     private static function one_item(): array {
         return array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) );
     }

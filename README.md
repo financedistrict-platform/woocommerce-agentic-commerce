@@ -141,7 +141,9 @@ An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 confi
 | `GET /orders` | `401 session_token_required` |
 | `POST /checkout-sessions` with a used `Idempotency-Key` | `409 idempotency_key_conflict` |
 
-`POST /orders/{id}/returns` records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen.
+Save the token before doing anything else. It cannot be fetched again, and it does not expire: after checkout it keeps giving access to that order and its returns.
+
+`POST /orders/{id}/returns` records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
 
 ### Prism Console Setup
 
