@@ -103,6 +103,61 @@ if ( ! function_exists( 'wc_get_logger' ) ) {
     }
 }
 
+if ( ! function_exists( '__' ) ) {
+    function __( string $text, string $domain = 'default' ): string {
+        return $text;
+    }
+}
+
+if ( ! function_exists( 'get_bloginfo' ) ) {
+    function get_bloginfo( string $show = '' ): string {
+        return 'Test Store';
+    }
+}
+
+if ( ! function_exists( 'add_action' ) ) {
+    function add_action( string $tag, $callback, int $priority = 10, int $accepted_args = 1 ): bool {
+        $GLOBALS['fd_test_actions'][ $tag ][] = $callback;
+        return true;
+    }
+}
+
+if ( ! function_exists( 'wc_add_notice' ) ) {
+    function wc_add_notice( string $message, string $type = 'success' ): void {
+        $GLOBALS['fd_test_notices'][] = array( 'message' => $message, 'type' => $type );
+    }
+}
+
+if ( ! class_exists( 'WC_Payment_Gateway' ) ) {
+    abstract class WC_Payment_Gateway {
+        public $id                 = '';
+        public $has_fields         = false;
+        public $method_title       = '';
+        public $method_description = '';
+        public $supports           = array();
+        public $form_fields        = array();
+        public $title              = '';
+        public $description        = '';
+        public $enabled            = 'yes';
+        protected $settings        = array();
+
+        public function init_settings(): void {
+            $this->settings = $GLOBALS['fd_test_options'][ 'woocommerce_' . $this->id . '_settings' ] ?? array();
+        }
+
+        public function get_option( $key, $empty_value = null ) {
+            return $this->settings[ $key ] ?? ( $this->form_fields[ $key ]['default'] ?? $empty_value );
+        }
+
+        public function is_available() {
+            return 'yes' === $this->enabled;
+        }
+
+        public function process_admin_options() {
+        }
+    }
+}
+
 if ( ! defined( 'FD_PRISM_VERSION' ) ) {
     preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-prism.php' ), $fd_prism_version );
     define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
@@ -125,3 +180,4 @@ require_once $core . '/ucp/class-fd-ucp-version-registry.php';
 require_once $core . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/prism/class-fd-prism-client.php';
 require_once $base . '/prism/class-fd-prism-handler.php';
+require_once $base . '/prism/class-fd-prism-gateway.php';
