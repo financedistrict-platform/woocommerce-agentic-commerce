@@ -113,11 +113,6 @@ class FD_UCP_Checkout_Controller {
             );
         }
 
-        $totals = array(
-            array( 'type' => 'subtotal', 'amount' => $cart_subtotal ),
-            array( 'type' => 'total', 'amount' => $cart_subtotal ),
-        );
-
         // Extract buyer if provided
         $buyer = null;
         if ( ! empty( $body['buyer'] ) ) {
@@ -131,20 +126,15 @@ class FD_UCP_Checkout_Controller {
         // Extract and process fulfillment if provided
         $fulfillment = null;
         if ( ! empty( $body['fulfillment'] ) ) {
-            $fulfillment = $this->process_fulfillment(
-                $body['fulfillment'],
-                $formatted_items,
-                $currency
-            );
-
-            $shipping_cost = $this->extract_selected_shipping_cost( $fulfillment );
-            if ( $shipping_cost > 0 ) {
-                $totals = array(
-                    array( 'type' => 'subtotal', 'amount' => $cart_subtotal ),
-                    array( 'type' => 'fulfillment', 'amount' => $shipping_cost ),
-                    array( 'type' => 'total', 'amount' => $cart_subtotal + $shipping_cost ),
-                );
+            $fulfillment = $this->process_fulfillment( $body['fulfillment'], $formatted_items );
+            if ( is_wp_error( $fulfillment ) ) {
+                return FD_UCP_Error::response( $fulfillment->get_error_code(), $fulfillment->get_error_message(), 422 );
             }
+        }
+
+        $totals = $this->priced_totals( $cart_subtotal, $this->extract_selected_shipping_cost( $fulfillment ) );
+        if ( is_wp_error( $totals ) ) {
+            return FD_UCP_Error::response( $totals->get_error_code(), $totals->get_error_message(), 422 );
         }
 
         // Create a pending WC order early so we have an order number for payment descriptions
@@ -266,11 +256,10 @@ class FD_UCP_Checkout_Controller {
                 ? json_decode( $updates['line_items'], true )
                 : json_decode( $session['line_items'], true );
 
-            $fulfillment = $this->process_fulfillment(
-                $body['fulfillment'],
-                $line_items_for_shipping,
-                $session['currency']
-            );
+            $fulfillment = $this->process_fulfillment( $body['fulfillment'], $line_items_for_shipping );
+            if ( is_wp_error( $fulfillment ) ) {
+                return FD_UCP_Error::response( $fulfillment->get_error_code(), $fulfillment->get_error_message(), 422 );
+            }
             $updates['fulfillment'] = wp_json_encode( $fulfillment );
         }
 
@@ -331,19 +320,16 @@ class FD_UCP_Checkout_Controller {
             $cart_subtotal += $this->extract_total( $li['totals'] ?? array() );
         }
 
-        $new_totals_array = array(
-            array( 'type' => 'subtotal', 'amount' => $cart_subtotal ),
-        );
-        if ( $shipping_cost > 0 ) {
-            $new_totals_array[] = array( 'type' => 'fulfillment', 'amount' => $shipping_cost );
+        $new_totals_array = $this->priced_totals( $cart_subtotal, $shipping_cost );
+        if ( is_wp_error( $new_totals_array ) ) {
+            return FD_UCP_Error::response( $new_totals_array->get_error_code(), $new_totals_array->get_error_message(), 422 );
         }
-        $new_totals_array[] = array( 'type' => 'total', 'amount' => $cart_subtotal + $shipping_cost );
         $updates['totals'] = wp_json_encode( $new_totals_array );
 
         // Re-prepare payment if total changed
         $current_totals = json_decode( $session['totals'], true );
         $current_total  = $this->extract_total( $current_totals );
-        $new_total      = $cart_subtotal + $shipping_cost;
+        $new_total      = $this->extract_total( $new_totals_array );
 
         if ( $current_total !== $new_total || empty( $session['payment_meta'] ) || $session['payment_meta'] === 'null' ) {
             $order_label = 'Checkout';
@@ -765,23 +751,33 @@ class FD_UCP_Checkout_Controller {
     // Fulfillment / Shipping
     // =========================================================================
 
-    private function process_fulfillment( array $input, array $line_items, string $currency ): array {
-        $methods = $input['methods'] ?? array();
-        if ( empty( $methods ) ) {
-            return $input;
+    private function priced_totals( int $subtotal, int $shipping ): array|WP_Error {
+        $total = $subtotal + $shipping;
+        if ( $shipping < 0 || $total <= 0 ) {
+            return new WP_Error( 'invalid_fulfillment', 'Checkout total cannot be priced' );
         }
 
-        $method = $methods[0];
-        $dest   = $method['destinations'][0] ?? null;
+        $totals = array( array( 'type' => 'subtotal', 'amount' => $subtotal ) );
+        if ( $shipping > 0 ) {
+            $totals[] = array( 'type' => 'fulfillment', 'amount' => $shipping );
+        }
+        $totals[] = array( 'type' => 'total', 'amount' => $total );
 
-        if ( ! $dest ) {
-            return $input;
+        return $totals;
+    }
+
+    private function process_fulfillment( array $input, array $line_items ): array|WP_Error {
+        $method = $input['methods'][0] ?? null;
+        $dest   = is_array( $method ) ? ( $method['destinations'][0] ?? null ) : null;
+
+        if ( ! is_array( $dest ) ) {
+            return new WP_Error( 'invalid_fulfillment', 'fulfillment.methods[0].destinations[0] is required' );
         }
 
         $dest = FD_UCP_Address::normalize( $dest );
 
         if ( empty( $dest['address_country'] ) ) {
-            return $input;
+            return new WP_Error( 'invalid_fulfillment', 'Shipping destination needs address_country' );
         }
 
         $wc_dest = FD_UCP_Address::ucp_to_wc( $dest );
@@ -804,6 +800,9 @@ class FD_UCP_Checkout_Controller {
             }
 
             $cost = FD_UCP_Formatter::to_minor( (float) $rate->get_cost() );
+            if ( $cost < 0 ) {
+                return new WP_Error( 'invalid_fulfillment', 'Shipping rate cannot be priced' );
+            }
             $options[] = array(
                 'id'     => $rate_id,
                 'title'  => $rate->get_label(),
