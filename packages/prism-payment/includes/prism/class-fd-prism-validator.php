@@ -6,6 +6,7 @@ class FD_Prism_Validator {
     private const AUTHORIZATION_FIELDS = array( 'from', 'to', 'value', 'validAfter', 'validBefore', 'nonce' );
     private const REQUIREMENT_FIELDS   = array( 'scheme', 'network', 'asset', 'payTo', 'amount' );
     private const NONCE_PATTERN        = '/^0x[0-9a-fA-F]{64}$/';
+    private const ATOMIC_AMOUNT_PATTERN = '/^[1-9][0-9]*$/';
     private const CLOCK_SKEW_SECONDS   = 30;
     private const X402_VERSION         = 2;
     private const SCHEME               = 'exact';
@@ -127,10 +128,13 @@ class FD_Prism_Validator {
                 return null;
             }
         }
-        foreach ( array( 'value', 'validAfter', 'validBefore' ) as $field ) {
+        foreach ( array( 'validAfter', 'validBefore' ) as $field ) {
             if ( ! ctype_digit( $authorization[ $field ] ) ) {
                 return null;
             }
+        }
+        if ( ! self::is_atomic_amount( $authorization['value'] ) ) {
+            return null;
         }
         if ( ! preg_match( self::NONCE_PATTERN, $authorization['nonce'] ) ) {
             return null;
@@ -162,7 +166,11 @@ class FD_Prism_Validator {
                 return false;
             }
         }
-        return ctype_digit( $requirement['amount'] );
+        return self::is_atomic_amount( $requirement['amount'] );
+    }
+
+    private static function is_atomic_amount( $value ): bool {
+        return is_string( $value ) && 1 === preg_match( self::ATOMIC_AMOUNT_PATTERN, $value );
     }
 
     private static function is_settleable_requirement( $requirement ): bool {
