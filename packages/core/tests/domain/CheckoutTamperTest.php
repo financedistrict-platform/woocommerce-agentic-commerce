@@ -2,6 +2,8 @@
 declare( strict_types=1 );
 
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 
 final class CheckoutTamperTest extends TestCase {
@@ -832,6 +834,136 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( array(), FD_Test_Order_Store::$refunds );
         $this->assertSame( array(), $this->handler->settled );
         $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts );
+    }
+
+    private const DUMMY_ID = 'xyz.fd.dummy_payment';
+
+    private static function dummy_registry( string $environment, bool $debug, mixed $enabled ): FD_Payment_Registry {
+        FD_Test_WP::$environment = $environment;
+        define( 'WP_DEBUG', $debug );
+        if ( null !== $enabled ) {
+            define( 'FD_DUMMY_PAYMENT_ENABLED', $enabled );
+        }
+        fd_dummy_payment_init();
+        $registry = new FD_Payment_Registry();
+        do_action( 'fd_ucp_register_payment_handlers', $registry );
+        return $registry;
+    }
+
+    private function dummy_session( array $payment_meta ): void {
+        $this->db->sessions[ self::SESSION_ID ]['totals']       = json_encode( self::untaxed_totals() );
+        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( $payment_meta );
+    }
+
+    private static function dummy_prepared( FD_Payment_Registry $registry ): array {
+        return $registry->prepare_all( array(
+            'total'             => 4695,
+            'checkout_id'       => self::SESSION_ID,
+            'checkout_base_url' => 'https://shop.example/wp-json/fd-ucp/v1',
+            'store_name'        => 'Shop',
+        ) );
+    }
+
+    private function complete_with_dummy( FD_Payment_Registry $registry, array $credential ): WP_REST_Response {
+        return ( new FD_UCP_Checkout_Controller( $registry ) )->complete_session( new WP_REST_Request(
+            '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
+            self::headers( self::TOKEN ),
+            array( 'id' => self::SESSION_ID ),
+            array( 'payment' => array( 'instruments' => array( array(
+                'handler_id' => self::DUMMY_ID,
+                'credential' => $credential,
+            ) ) ) )
+        ) );
+    }
+
+    public static function dummy_blocked_configurations(): array {
+        return array(
+            'production with debug on and no opt-in' => array( 'production', true, null ),
+            'production with opt-in'                 => array( 'production', true, true ),
+            'staging with opt-in'                    => array( 'staging', true, true ),
+            'unknown environment with opt-in'        => array( 'qa', true, true ),
+            'development without opt-in'             => array( 'development', true, null ),
+            'development with opt-in set to false'   => array( 'development', true, false ),
+            'development with opt-in set to 1'       => array( 'development', true, 1 ),
+            'development with opt-in set to "true"'  => array( 'development', true, 'true' ),
+        );
+    }
+
+    #[DataProvider( 'dummy_blocked_configurations' )]
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState( false )]
+    public function test_dummy_handler_cannot_be_selected_outside_an_opted_in_development_site( string $environment, bool $debug, mixed $enabled ): void {
+        $registry = self::dummy_registry( $environment, $debug, $enabled );
+        $this->assertNull( $registry->get( self::DUMMY_ID ) );
+        $this->assertArrayNotHasKey( self::DUMMY_ID, $registry->get_ucp_discovery_handlers() );
+
+        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695 ) ) );
+        $response = $this->complete_with_dummy( $registry, array( 'amount' => '4695' ) );
+
+        $this->assertSame( 400, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'invalid_instrument', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState( false )]
+    public function test_dummy_handler_refuses_to_settle_once_the_site_is_production(): void {
+        $registry = self::dummy_registry( 'local', false, true );
+        $prepared = self::dummy_prepared( $registry );
+        FD_Test_WP::$environment = 'production';
+
+        $result = $registry->get( self::DUMMY_ID )->settle_payment( array(
+            'checkout_id'   => self::SESSION_ID,
+            'credential'    => array( 'amount' => '4695' ),
+            'checkout_meta' => $prepared,
+        ) );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertArrayNotHasKey( 'transaction_reference', $result );
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState( false )]
+    public function test_dummy_handler_registered_directly_on_production_cannot_complete_a_checkout(): void {
+        $registry = self::dummy_registry( 'production', true, true );
+        $registry->register( new FD_Dummy_Handler() );
+        $this->dummy_session( array( self::DUMMY_ID => array( 'prepared_amount' => 4695 ) ) );
+
+        $response = $this->complete_with_dummy( $registry, array( 'amount' => '4695' ) );
+
+        $this->assertSame( 422, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_failed', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState( false )]
+    public function test_dummy_handler_refuses_to_settle_without_a_stored_quote(): void {
+        $registry = self::dummy_registry( 'development', false, true );
+
+        $result = $registry->get( self::DUMMY_ID )->settle_payment( array(
+            'checkout_id'   => self::SESSION_ID,
+            'credential'    => array( 'amount' => '4695' ),
+            'checkout_meta' => array(),
+        ) );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertArrayNotHasKey( 'transaction_reference', $result );
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState( false )]
+    public function test_opted_in_development_dummy_settles_the_stored_quote_not_the_buyer_amount(): void {
+        $registry = self::dummy_registry( 'development', false, true );
+        $this->assertArrayNotHasKey( self::DUMMY_ID, $registry->get_ucp_discovery_handlers() );
+        $this->dummy_session( self::dummy_prepared( $registry ) );
+
+        $response = $this->complete_with_dummy( $registry, array( 'amount' => '1' ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'completed', $this->db->sessions[ self::SESSION_ID ]['status'] );
     }
 
     private static function one_item(): array {

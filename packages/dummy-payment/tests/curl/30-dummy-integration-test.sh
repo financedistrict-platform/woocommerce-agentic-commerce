@@ -34,9 +34,9 @@ echo "  Product: $PRODUCT_ID"
 echo "========================================"
 echo ""
 
-# ── 1. Discovery: dummy handler present ─────────────────
+# ── 1. Discovery: dummy handler is never advertised ─────
 
-echo "1. Discovery — dummy handler"
+echo "1. Discovery — dummy handler hidden"
 
 DISCOVERY=$(curl -sL "$BASE_URL/.well-known/ucp")
 
@@ -44,47 +44,9 @@ FOUND=$(echo "$DISCOVERY" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 handlers = d.get('ucp', {}).get('payment_handlers', {})
-print('$HANDLER_NS' if '$HANDLER_NS' in handlers else '')
+print('listed' if '$HANDLER_NS' in handlers else 'hidden')
 " 2>/dev/null)
-assert_eq "dummy handler registered" "$HANDLER_NS" "$FOUND"
-
-HANDLER_TYPE=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-h = d['ucp']['payment_handlers']['$HANDLER_NS'][0]
-print(h.get('id', ''))
-" 2>/dev/null)
-assert_eq "handler id is dummy" "dummy" "$HANDLER_TYPE"
-
-HANDLER_NAME=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-h = d['ucp']['payment_handlers']['$HANDLER_NS'][0]
-print(h.get('name', ''))
-" 2>/dev/null)
-assert_eq "handler name matches namespace" "$HANDLER_NS" "$HANDLER_NAME"
-
-echo ""
-
-# ── 2. Discovery: accepts config ────────────────────────
-
-echo "2. Discovery — accepts config"
-
-DISC_NETWORK=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-a = d['ucp']['payment_handlers']['$HANDLER_NS'][0]['config']['accepts'][0]
-print(a['network'])
-" 2>/dev/null)
-assert_eq "discovery network is dummy:testnet" "dummy:testnet" "$DISC_NETWORK"
-
-DISC_ASSET=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-a = d['ucp']['payment_handlers']['$HANDLER_NS'][0]['config']['accepts'][0]
-print(a['asset'])
-" 2>/dev/null)
-assert_eq "discovery asset is DUMMY" "DUMMY" "$DISC_ASSET"
+assert_eq "dummy handler not in discovery" "hidden" "$FOUND"
 
 echo ""
 

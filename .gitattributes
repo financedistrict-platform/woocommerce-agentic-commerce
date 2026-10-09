@@ -1,1 +1,2 @@
 packages/core/tests/fixtures/** -text
+packages/dummy-payment export-ignore

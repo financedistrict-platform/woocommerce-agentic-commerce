@@ -80,7 +80,7 @@ Three packages in a monorepo. Core works standalone; payment handlers are option
 |---------|--------|-------------|
 | [`packages/core`](packages/core) | `fd-woocommerce-ucp` | UCP protocol layer — discovery, catalog, cart, checkout sessions, orders. Provides the payment handler interface that any provider can implement. |
 | [`packages/prism-payment`](packages/prism-payment) | `fd-woocommerce-prism` | [Prism](https://developers.fd.xyz) payment handler — on-chain stablecoin settlement. Includes WooCommerce admin meta box with block explorer links and Prism reference tracking. |
-| [`packages/dummy-payment`](packages/dummy-payment) | `fd-woocommerce-dummy-payment` | Test handler that always succeeds. Useful for developing against the checkout flow without a wallet or testnet funds. |
+| [`packages/dummy-payment`](packages/dummy-payment) | `fd-woocommerce-dummy-payment` | Test handler that always succeeds. Useful for developing against the checkout flow without a wallet or testnet funds. Runs only on a `local` or `development` site that opts in, and is never listed in discovery. |
 
 ## Installation
 
@@ -102,6 +102,15 @@ packages/dummy-payment   → wp-content/plugins/fd-woocommerce-dummy-payment  # 
 ```
 
 Activate **UCP Core** first, then any payment handlers. Handlers hook into UCP at `plugins_loaded` priority 25.
+
+The dummy handler stays off unless `wp-config.php` sets the environment to `local` or `development` and opts in:
+
+```php
+define( 'WP_ENVIRONMENT_TYPE', 'development' );
+define( 'FD_DUMMY_PAYMENT_ENABLED', true );
+```
+
+It is not advertised in `/.well-known/ucp`; agents pick it from the checkout session's `payment_handlers`. Never install it on a production store.
 
 ## Configuration
 
@@ -271,7 +280,7 @@ bash packages/core/tests/curl/30-ucp-integration-test.sh [product_id]
 # Prism payment tests (15 tests)
 bash packages/prism-payment/tests/curl/30-prism-integration-test.sh [product_id]
 
-# Dummy payment handler tests (17 tests)
+# Dummy payment handler tests (13 tests)
 bash packages/dummy-payment/tests/curl/30-dummy-integration-test.sh [product_id]
 ```
 
@@ -281,8 +290,8 @@ bash packages/dummy-payment/tests/curl/30-dummy-integration-test.sh [product_id]
 |---------|------|-------------|-------|
 | Core UCP | 150 | 19 | 169 |
 | Prism Payment | 40 | 15 | 55 |
-| Dummy Payment | — | 17 | 17 |
-| **Total** | **190** | **51** | **241** |
+| Dummy Payment | — | 13 | 13 |
+| **Total** | **190** | **47** | **237** |
 
 ## Development
 
