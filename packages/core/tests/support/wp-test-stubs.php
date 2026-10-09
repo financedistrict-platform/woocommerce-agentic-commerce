@@ -256,7 +256,11 @@ final class FD_Test_Product_Store {
 }
 
 final class FD_Test_Product {
-    public function __construct( private int $id, private string $price, private string $name = 'Test product' ) {
+    public function __construct( private int $id, private string $price, private string $name = 'Test product', private bool $ships = true ) {
+    }
+
+    public function needs_shipping(): bool {
+        return $this->ships;
     }
 
     public function get_id(): int {
@@ -337,6 +341,7 @@ function wp_generate_uuid4(): string {
 }
 
 function wc_create_order( array $args = array() ): WC_Order {
+    FD_Test_Order_Store::$created++;
     return new WC_Order();
 }
 
@@ -345,6 +350,7 @@ function wc_get_order( $id ) {
 }
 
 final class FD_Test_Order_Store {
+    public static int $created = 0;
     public static array $orders = array();
 }
 
@@ -437,6 +443,8 @@ final class FD_Test_Wpdb {
     public string $prefix = 'wp_';
     public array $sessions = array();
     public array $updates  = array();
+    public array $calls    = array();
+    public array $held     = array();
 
     public function get_charset_collate(): string {
         return '';
@@ -447,6 +455,12 @@ final class FD_Test_Wpdb {
     }
 
     public function get_var( string $query ) {
+        $this->calls[] = $query;
+        foreach ( $this->held as $name ) {
+            if ( false !== strpos( $query, "GET_LOCK('" . $name . "'" ) ) {
+                return '0';
+            }
+        }
         return '1';
     }
 
@@ -460,6 +474,7 @@ final class FD_Test_Wpdb {
     }
 
     public function update( string $table, array $data, array $where ): int {
+        $this->calls[]   = 'update';
         $this->updates[] = array( $table, $data, $where );
         if ( isset( $this->sessions[ $where['id'] ] ) ) {
             $this->sessions[ $where['id'] ] = array_merge( $this->sessions[ $where['id'] ], $data );

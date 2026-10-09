@@ -132,7 +132,7 @@ class FD_UCP_Checkout_Controller {
             }
         }
 
-        $totals = $this->priced_totals( $cart_subtotal, $this->extract_selected_shipping_cost( $fulfillment ) );
+        $totals = FD_UCP_Checkout_Pricing::priced_totals( $cart_subtotal, FD_UCP_Checkout_Pricing::selected_shipping_cost( $fulfillment ) );
         if ( is_wp_error( $totals ) ) {
             return FD_UCP_Error::response( $totals->get_error_code(), $totals->get_error_message(), 422 );
         }
@@ -144,7 +144,7 @@ class FD_UCP_Checkout_Controller {
 
         // Prepare payment handlers
         $checkout_base_url = home_url( '/wp-json/' . self::NAMESPACE );
-        $checkout_total    = $this->extract_total( $totals );
+        $checkout_total    = FD_UCP_Checkout_Pricing::total_of( $totals );
         $store_name        = FD_UCP_Plugin::instance()->store_name();
 
         $prepare_input = array(
@@ -213,7 +213,16 @@ class FD_UCP_Checkout_Controller {
     // =========================================================================
 
     public function update_session( WP_REST_Request $request ): WP_REST_Response {
-        $session = $this->load_session( $request->get_param( 'id' ) );
+        return $this->with_session_lock(
+            (string) $request->get_param( 'id' ),
+            'session_busy',
+            'Checkout session is being changed by another request',
+            fn() => $this->do_update_session( $request )
+        );
+    }
+
+    private function do_update_session( WP_REST_Request $request ): WP_REST_Response {
+        $session = $this->load_session( (string) $request->get_param( 'id' ) );
         if ( ! $session ) {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
@@ -250,19 +259,6 @@ class FD_UCP_Checkout_Controller {
             $updates['buyer'] = wp_json_encode( $existing_buyer );
         }
 
-        // Update fulfillment
-        if ( ! empty( $body['fulfillment'] ) ) {
-            $line_items_for_shipping = isset( $updates['line_items'] )
-                ? json_decode( $updates['line_items'], true )
-                : json_decode( $session['line_items'], true );
-
-            $fulfillment = $this->process_fulfillment( $body['fulfillment'], $line_items_for_shipping );
-            if ( is_wp_error( $fulfillment ) ) {
-                return FD_UCP_Error::response( $fulfillment->get_error_code(), $fulfillment->get_error_message(), 422 );
-            }
-            $updates['fulfillment'] = wp_json_encode( $fulfillment );
-        }
-
         // Update line items
         if ( ! empty( $body['line_items'] ) && is_array( $body['line_items'] ) ) {
             $formatted_items = array();
@@ -296,31 +292,25 @@ class FD_UCP_Checkout_Controller {
                 );
             }
 
-            $totals = array(
-                array( 'type' => 'subtotal', 'amount' => $cart_subtotal ),
-                array( 'type' => 'total', 'amount' => $cart_subtotal ),
-            );
-
             $updates['line_items'] = wp_json_encode( $formatted_items );
-            $updates['totals']     = wp_json_encode( $totals );
         }
 
-        // Recalculate totals with shipping if a fulfillment option is selected
-        $fulfillment_data = isset( $updates['fulfillment'] )
-            ? json_decode( $updates['fulfillment'], true )
-            : json_decode( $session['fulfillment'] ?? 'null', true );
+        $fulfillment_input = ! empty( $body['fulfillment'] )
+            ? $body['fulfillment']
+            : ( isset( $updates['line_items'] ) ? json_decode( $session['fulfillment'] ?? 'null', true ) : null );
 
-        $shipping_cost    = $this->extract_selected_shipping_cost( $fulfillment_data );
-        $items_for_totals = isset( $updates['line_items'] )
-            ? json_decode( $updates['line_items'], true )
-            : json_decode( $session['line_items'], true );
-
-        $cart_subtotal = 0;
-        foreach ( $items_for_totals as $li ) {
-            $cart_subtotal += $this->extract_total( $li['totals'] ?? array() );
+        if ( null !== $fulfillment_input ) {
+            $fulfillment = $this->process_fulfillment(
+                is_array( $fulfillment_input ) ? $fulfillment_input : array(),
+                json_decode( $updates['line_items'] ?? $session['line_items'], true )
+            );
+            if ( is_wp_error( $fulfillment ) ) {
+                return FD_UCP_Error::response( $fulfillment->get_error_code(), $fulfillment->get_error_message(), 422 );
+            }
+            $updates['fulfillment'] = wp_json_encode( $fulfillment );
         }
 
-        $new_totals_array = $this->priced_totals( $cart_subtotal, $shipping_cost );
+        $new_totals_array = FD_UCP_Checkout_Pricing::totals_from_session( array_merge( $session, $updates ) );
         if ( is_wp_error( $new_totals_array ) ) {
             return FD_UCP_Error::response( $new_totals_array->get_error_code(), $new_totals_array->get_error_message(), 422 );
         }
@@ -328,8 +318,8 @@ class FD_UCP_Checkout_Controller {
 
         // Re-prepare payment if total changed
         $current_totals = json_decode( $session['totals'], true );
-        $current_total  = $this->extract_total( $current_totals );
-        $new_total      = $this->extract_total( $new_totals_array );
+        $current_total  = FD_UCP_Checkout_Pricing::total_of( $current_totals );
+        $new_total      = FD_UCP_Checkout_Pricing::total_of( $new_totals_array );
 
         if ( $current_total !== $new_total || empty( $session['payment_meta'] ) || $session['payment_meta'] === 'null' ) {
             $order_label = 'Checkout';
@@ -372,19 +362,27 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( $rl->get_error_code(), $rl->get_error_message(), 429 );
         }
 
-        $session_id = $request->get_param( 'id' );
+        $session_id = (string) $request->get_param( 'id' );
 
-        // Acquire an advisory lock to prevent concurrent /complete calls from double-settling.
+        return $this->with_session_lock(
+            $session_id,
+            'settlement_in_progress',
+            'Another settlement attempt is in progress',
+            fn() => $this->do_complete_session( $request, $session_id )
+        );
+    }
+
+    private function with_session_lock( string $session_id, string $busy_code, string $busy_message, callable $fn ): WP_REST_Response {
         global $wpdb;
-        $lock_name = 'fd_ucp_complete_' . md5( $session_id );
+        $lock_name = 'fd_ucp_session_' . md5( $session_id );
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $got_lock = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 2)', $lock_name ) );
         if ( '1' !== (string) $got_lock ) {
-            return FD_UCP_Error::response( 'settlement_in_progress', 'Another settlement attempt is in progress', 409 );
+            return FD_UCP_Error::response( $busy_code, $busy_message, 409 );
         }
 
         try {
-            return $this->do_complete_session( $request, $session_id );
+            return $fn();
         } finally {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
             $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
@@ -735,36 +733,9 @@ class FD_UCP_Checkout_Controller {
         return hash( 'sha256', $agent );
     }
 
-    private function extract_total( ?array $totals ): int {
-        if ( ! $totals ) {
-            return 0;
-        }
-        foreach ( $totals as $t ) {
-            if ( 'total' === ( $t['type'] ?? '' ) ) {
-                return (int) $t['amount'];
-            }
-        }
-        return 0;
-    }
-
     // =========================================================================
     // Fulfillment / Shipping
     // =========================================================================
-
-    private function priced_totals( int $subtotal, int $shipping ): array|WP_Error {
-        $total = $subtotal + $shipping;
-        if ( $shipping < 0 || $total <= 0 ) {
-            return new WP_Error( 'invalid_fulfillment', 'Checkout total cannot be priced' );
-        }
-
-        $totals = array( array( 'type' => 'subtotal', 'amount' => $subtotal ) );
-        if ( $shipping > 0 ) {
-            $totals[] = array( 'type' => 'fulfillment', 'amount' => $shipping );
-        }
-        $totals[] = array( 'type' => 'total', 'amount' => $total );
-
-        return $totals;
-    }
 
     private function process_fulfillment( array $input, array $line_items ): array|WP_Error {
         $method = $input['methods'][0] ?? null;
@@ -813,6 +784,9 @@ class FD_UCP_Checkout_Controller {
         }
 
         if ( empty( $options ) ) {
+            if ( $this->needs_shipping( $line_items ) ) {
+                return new WP_Error( 'invalid_fulfillment', 'No shipping method serves this destination' );
+            }
             $options[] = array(
                 'id'     => 'free_shipping',
                 'title'  => 'Free Shipping',
@@ -850,6 +824,16 @@ class FD_UCP_Checkout_Controller {
                 ),
             ),
         );
+    }
+
+    private function needs_shipping( array $line_items ): bool {
+        foreach ( $line_items as $li ) {
+            $product = wc_get_product( (int) ( $li['item']['id'] ?? 0 ) );
+            if ( ! $product || $product->needs_shipping() ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function build_shipping_package( array $line_items, array $wc_dest ): array {
@@ -915,34 +899,6 @@ class FD_UCP_Checkout_Controller {
         $result = $shipping->calculate_shipping_for_package( $package );
 
         return $result['rates'] ?? array();
-    }
-
-    private function extract_selected_shipping_cost( ?array $fulfillment ): int {
-        if ( ! $fulfillment ) {
-            return 0;
-        }
-
-        $group = $fulfillment['methods'][0]['groups'][0] ?? null;
-        if ( ! $group ) {
-            return 0;
-        }
-
-        $selected_id = $group['selected_option_id'] ?? null;
-        if ( ! $selected_id ) {
-            return 0;
-        }
-
-        foreach ( $group['options'] ?? array() as $option ) {
-            if ( $option['id'] === $selected_id ) {
-                foreach ( $option['totals'] ?? array() as $total ) {
-                    if ( 'total' === $total['type'] ) {
-                        return (int) $total['amount'];
-                    }
-                }
-            }
-        }
-
-        return 0;
     }
 
     // =========================================================================
