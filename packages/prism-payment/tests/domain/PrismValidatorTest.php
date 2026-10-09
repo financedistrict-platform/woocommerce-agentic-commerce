@@ -5,273 +5,148 @@ use PHPUnit\Framework\TestCase;
 
 final class PrismValidatorTest extends TestCase {
 
-    // ── extract_signed_summary() ─────────────────────────────
+    private const RESOURCE_URL = 'https://store.test/checkout-sessions/c1';
 
-    public function test_extract_flat_credential(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '1500000',
-            'to'      => '0xRecipient',
-        );
-
-        $summary = FD_Prism_Validator::extract_signed_summary( $cred );
-
-        $this->assertSame( 'eip155:84532', $summary['network'] );
-        $this->assertSame( '0xUsdc', $summary['asset'] );
-        $this->assertSame( '1500000', $summary['value'] );
-        $this->assertSame( '0xRecipient', $summary['to'] );
-    }
-
-    public function test_extract_nested_payment_payload(): void {
-        $cred = array(
-            'paymentPayload' => array(
+    private static function requirement( array $overrides = array() ): array {
+        return array_merge(
+            array(
+                'scheme'  => 'exact',
                 'network' => 'eip155:84532',
-                'payload' => array(
-                    'asset'         => '0xAsset',
-                    'authorization' => array(
-                        'value' => '2000000',
-                        'to'    => '0xPayTo',
-                    ),
-                ),
-                'accepted' => array(
-                    'asset' => '0xAcceptedAsset',
-                ),
+                'asset'   => '0xUsdc',
+                'payTo'   => '0xPayTo',
+                'amount'  => '1500000',
             ),
-            'paymentRequirements' => array(
-                'asset' => '0xReqAsset',
-            ),
+            $overrides
         );
-
-        $summary = FD_Prism_Validator::extract_signed_summary( $cred );
-
-        $this->assertSame( 'eip155:84532', $summary['network'] );
-        $this->assertSame( '0xReqAsset', $summary['asset'] );
-        $this->assertSame( '2000000', $summary['value'] );
-        $this->assertSame( '0xPayTo', $summary['to'] );
     }
 
-    public function test_extract_base64_credential(): void {
-        $data = json_encode( array(
-            'network' => 'eip155:1',
-            'value'   => '5000000',
-            'to'      => '0xAddr',
-            'asset'   => '0xToken',
-        ) );
-        $b64 = base64_encode( $data );
-
-        $summary = FD_Prism_Validator::extract_signed_summary( $b64 );
-
-        $this->assertSame( 'eip155:1', $summary['network'] );
-        $this->assertSame( '5000000', $summary['value'] );
-    }
-
-    public function test_extract_returns_null_for_garbage(): void {
-        $this->assertNull( FD_Prism_Validator::extract_signed_summary( 'not-valid' ) );
-        $this->assertNull( FD_Prism_Validator::extract_signed_summary( 42 ) );
-        $this->assertNull( FD_Prism_Validator::extract_signed_summary( array( 'foo' => 'bar' ) ) );
-    }
-
-    // ── validate_credential() ────────────────────────────────
-
-    private function make_payment_meta( array $accepts ): array {
+    private static function credential( array $accepted, array $authorization = array() ): array {
         return array(
-            'xyz.fd.prism_payment' => array(
-                'ucp' => array(
-                    array(
+            'paymentPayload' => array(
+                'x402Version' => 2,
+                'accepted'    => $accepted,
+                'payload'     => array(
+                    'signature'     => '0xsig',
+                    'authorization' => array_merge(
                         array(
-                            'config' => array( 'accepts' => $accepts ),
+                            'from'        => '0xPayer',
+                            'to'          => $accepted['payTo'],
+                            'value'       => $accepted['amount'],
+                            'validAfter'  => '0',
+                            'validBefore' => (string) ( time() + 300 ),
+                            'nonce'       => '0x' . str_repeat( '0a', 32 ),
                         ),
+                        $authorization
                     ),
                 ),
             ),
         );
     }
 
-    public function test_valid_credential_passes(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '1500000',
-            'to'      => '0xPayTo',
+    private static function meta( array $accepts ): array {
+        return array(
+            'x402Version' => 2,
+            'resource'    => array( 'url' => self::RESOURCE_URL ),
+            'accepts'     => $accepts,
         );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
-
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertTrue( $result );
     }
 
-    public function test_overpayment_passes(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '2000000',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+    private static function assertErrorCode( string $code, $result ): void {
+        self::assertInstanceOf( WP_Error::class, $result );
+        self::assertSame( $code, $result->get_error_code() );
+    }
 
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertTrue( $result );
+    public function test_valid_credential_returns_the_stored_requirement(): void {
+        $verified = FD_Prism_Validator::verify( self::credential( self::requirement() ), self::meta( array( self::requirement() ) ) );
+
+        $this->assertSame( self::requirement(), $verified['payment_requirements'] );
+        $this->assertSame( 2, $verified['x402_version'] );
+        $this->assertSame( '0xPayer', $verified['payer'] );
+        $this->assertSame( '1500000', $verified['value'] );
+    }
+
+    public function test_base64_credential_is_decoded(): void {
+        $credential = base64_encode( json_encode( self::credential( self::requirement() ) ) );
+
+        $this->assertIsArray( FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
+    }
+
+    public function test_overpayment_fails(): void {
+        $credential = self::credential( self::requirement(), array( 'value' => '2000000' ) );
+
+        self::assertErrorCode( 'amount_mismatch', FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
     }
 
     public function test_underpayment_fails(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '500000',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+        $credential = self::credential( self::requirement(), array( 'value' => '500000' ) );
 
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'amount_too_low', $result->get_error_code() );
+        self::assertErrorCode( 'amount_mismatch', FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
     }
 
     public function test_wrong_network_fails(): void {
-        $cred = array(
-            'network' => 'eip155:1',
-            'asset'   => '0xUsdc',
-            'value'   => '1500000',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+        $credential = self::credential( self::requirement( array( 'network' => 'eip155:1' ) ) );
 
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'no_matching_accept', $result->get_error_code() );
+        self::assertErrorCode( 'no_matching_accept', FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
     }
 
     public function test_recipient_mismatch_fails(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '1500000',
-            'to'      => '0xWrongAddr',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+        $credential = self::credential( self::requirement(), array( 'to' => '0xWrongAddr' ) );
 
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'recipient_mismatch', $result->get_error_code() );
+        self::assertErrorCode( 'recipient_mismatch', FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
     }
 
-    public function test_case_insensitive_asset_matching(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUSDC',
-            'value'   => '1500000',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xusdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+    public function test_case_insensitive_address_matching(): void {
+        $credential = self::credential( self::requirement( array( 'asset' => '0xUSDC', 'payTo' => '0xPAYTO' ) ) );
 
-        $this->assertTrue( FD_Prism_Validator::validate_credential( $cred, $meta ) );
+        $verified = FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) );
+
+        $this->assertSame( self::requirement(), $verified['payment_requirements'] );
     }
 
     public function test_missing_payment_meta_fails(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'value'   => '1500000',
-        );
+        self::assertErrorCode( 'missing_payment_requirements', FD_Prism_Validator::verify( self::credential( self::requirement() ), null ) );
+    }
 
-        $result = FD_Prism_Validator::validate_credential( $cred, null );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'missing_payment_requirements', $result->get_error_code() );
+    public function test_quote_keeps_only_settleable_entries(): void {
+        $quote = FD_Prism_Validator::parse_quote( self::meta( array(
+            self::requirement( array( 'scheme' => 'upto' ) ),
+            self::requirement( array( 'network' => 'solana:mainnet' ) ),
+            self::requirement( array( 'amount' => 1500000 ) ),
+            self::requirement(),
+        ) ) );
+
+        $this->assertSame( array( self::requirement() ), $quote['accepts'] );
+    }
+
+    public function test_quote_with_another_x402_version_is_refused(): void {
+        $this->assertNull( FD_Prism_Validator::parse_quote( array( 'x402Version' => 1 ) + self::meta( array( self::requirement() ) ) ) );
+    }
+
+    public function test_stored_entry_with_missing_field_never_matches(): void {
+        $stored = self::requirement();
+        unset( $stored['payTo'] );
+
+        self::assertErrorCode( 'missing_payment_requirements', FD_Prism_Validator::verify( self::credential( self::requirement() ), self::meta( array( $stored ) ) ) );
     }
 
     public function test_invalid_credential_format_fails(): void {
-        $result = FD_Prism_Validator::validate_credential( 'garbage', $this->make_payment_meta( array() ) );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'invalid_credential', $result->get_error_code() );
+        foreach ( array( 'garbage', 42, array( 'foo' => 'bar' ) ) as $credential ) {
+            self::assertErrorCode( 'invalid_credential', FD_Prism_Validator::verify( $credential, self::meta( array( self::requirement() ) ) ) );
+        }
     }
 
-    // ── big number comparison ────────────────────────────────
-
     public function test_large_amounts_compared_correctly(): void {
-        $cred = array(
-            'network' => 'eip155:84532',
-            'asset'   => '0xUsdc',
-            'value'   => '999999999999999999',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1000000000000000000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+        $stored     = self::requirement( array( 'amount' => '1000000000000000000' ) );
+        $credential = self::credential( $stored, array( 'value' => '999999999999999999' ) );
 
-        $result = FD_Prism_Validator::validate_credential( $cred, $meta );
-        $this->assertInstanceOf( WP_Error::class, $result );
-        $this->assertSame( 'amount_too_low', $result->get_error_code() );
+        self::assertErrorCode( 'amount_mismatch', FD_Prism_Validator::verify( $credential, self::meta( array( $stored ) ) ) );
     }
 
     public function test_multi_network_accepts_matches_correct_one(): void {
-        $cred = array(
-            'network' => 'eip155:1',
-            'asset'   => '0xUsdc',
-            'value'   => '2000000',
-            'to'      => '0xPayTo',
-        );
-        $meta = $this->make_payment_meta( array(
-            array(
-                'network' => 'eip155:84532',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-            array(
-                'network' => 'eip155:1',
-                'asset'   => '0xUsdc',
-                'amount'  => '1500000',
-                'payTo'   => '0xPayTo',
-            ),
-        ) );
+        $base     = self::requirement();
+        $mainnet  = self::requirement( array( 'network' => 'eip155:1' ) );
+        $verified = FD_Prism_Validator::verify( self::credential( $mainnet ), self::meta( array( $base, $mainnet ) ) );
 
-        $this->assertTrue( FD_Prism_Validator::validate_credential( $cred, $meta ) );
+        $this->assertSame( $mainnet, $verified['payment_requirements'] );
     }
 }

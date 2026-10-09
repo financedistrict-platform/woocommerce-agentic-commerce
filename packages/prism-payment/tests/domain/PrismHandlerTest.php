@@ -175,7 +175,7 @@ final class PrismHandlerTest extends TestCase {
         $client = new FD_Prism_Client( self::GW, 'key' );
         $client->fetch_ucp_handlers( '2026-08-25' );
         $client->prepare_payment_requirements( '10.00', 'EUR', 'https://store.test/c/1', 'Order' );
-        $client->settle( array( 'x402Version' => 2, 'paymentPayload' => array() ) );
+        $client->settle( 2, array(), array() );
 
         $requests = $GLOBALS['fd_test_requests'];
         $this->assertCount( 3, $requests );
@@ -236,7 +236,7 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( self::GW . '/api/v2/merchant/payment-requirements', $GLOBALS['fd_test_requests'][1]['url'] );
     }
 
-    private const X402_BODY = '{"x402Version":2,"resource":{"url":"https://store.test/checkout-sessions/c1"},"accepts":[{"scheme":"exact"}]}';
+    private const X402_BODY = '{"x402Version":2,"resource":{"url":"https://store.test/checkout-sessions/c1"},"accepts":[{"scheme":"exact","network":"eip155:84532","asset":"0x036cbd53842c5426634e7929541ec2318f3dcf7e","payTo":"0x1111111111111111111111111111111111111111","amount":"10000000"}]}';
 
     private static function prepare_input(): array {
         return array(
@@ -307,13 +307,43 @@ final class PrismHandlerTest extends TestCase {
     }
 
     public function test_prepare_omits_the_entry_when_the_response_is_not_payment_requirements(): void {
-        foreach ( array( '{"x402Version":2,"resource":{}}', '{"x402Version":2,"accepts":[]}', '{"accepts":[{"scheme":"exact"}]}' ) as $body ) {
+        $entry   = json_decode( self::X402_BODY, true )['accepts'][0];
+        $quote   = static fn( array $overrides, array $accept_overrides = array() ): string => json_encode( array_merge(
+            json_decode( self::X402_BODY, true ),
+            array( 'accepts' => array( array_merge( $entry, $accept_overrides ) ) ),
+            $overrides
+        ) );
+        $bodies = array(
+            '{"x402Version":2,"resource":{}}',
+            '{"x402Version":2,"accepts":[]}',
+            '{"accepts":[{"scheme":"exact"}]}',
+            $quote( array( 'x402Version' => '2' ) ),
+            $quote( array( 'x402Version' => 1 ) ),
+            $quote( array(), array( 'amount' => 10000000 ) ),
+            $quote( array(), array( 'scheme' => 'upto' ) ),
+            $quote( array(), array( 'network' => 'solana:mainnet' ) ),
+            $quote( array(), array( 'payTo' => '' ) ),
+        );
+        foreach ( $bodies as $body ) {
             $handler = $this->handler( self::contract() );
             FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
             $GLOBALS['fd_test_http_response'] = array( 'body' => $body, 'response' => array( 'code' => 200 ) );
 
             $this->assertNull( $handler->prepare_checkout_payment( self::prepare_input() ), $body );
         }
+    }
+
+    public function test_prepare_offers_only_the_settleable_accepts(): void {
+        $handler = $this->handler( self::contract() );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $body    = json_decode( self::X402_BODY, true );
+        $evm     = $body['accepts'][0];
+        $body['accepts'] = array( array_merge( $evm, array( 'network' => 'solana:mainnet' ) ), $evm );
+        $GLOBALS['fd_test_http_response'] = array( 'body' => json_encode( $body ), 'response' => array( 'code' => 200 ) );
+
+        $meta = $handler->prepare_checkout_payment( self::prepare_input() );
+
+        $this->assertSame( array( $evm ), $meta['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] );
     }
 
     public function test_failed_reprepare_drops_the_stale_quote(): void {
@@ -394,22 +424,47 @@ final class PrismHandlerTest extends TestCase {
         $this->assertSame( array(), $GLOBALS['fd_test_requests'] );
     }
 
-    public function test_string_credential_reaches_settle_with_the_same_payload_as_the_object(): void {
-        $authorization = array(
+    private static function settle_meta( array $requirement ): array {
+        return array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array( 'config' => array(
+            'x402Version' => 2,
+            'resource'    => array( 'url' => 'https://store.test/checkout-sessions/c1' ),
+            'accepts'     => array( $requirement ),
+        ) ) ) ) ) );
+    }
+
+    private static function settle_credential( array $accepted, array $authorization ): array {
+        return array(
             'x402Version'    => 2,
             'paymentPayload' => array(
                 'x402Version' => 2,
-                'network'     => 'eip155:84532',
-                'accepted'    => array( 'network' => 'eip155:84532', 'asset' => '0x036CbD53842c5426634e7929541eC2318f3dCF7e' ),
-                'payload'     => array( 'authorization' => array( 'to' => '0x1111111111111111111111111111111111111111', 'value' => '1000000' ) ),
+                'accepted'    => $accepted,
+                'payload'     => array(
+                    'signature'     => '0xsig',
+                    'authorization' => $authorization + array(
+                        'value'       => $accepted['amount'],
+                        'validAfter'  => '0',
+                        'validBefore' => (string) ( time() + 300 ),
+                        'nonce'       => '0x' . str_repeat( '0b', 32 ),
+                    ),
+                ),
             ),
         );
-        $meta = array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array( 'config' => array( 'accepts' => array( array(
+    }
+
+    private static function requirement( string $pay_to, string $amount ): array {
+        return array(
+            'scheme'  => 'exact',
             'network' => 'eip155:84532',
-            'asset'   => '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-            'payTo'   => '0x1111111111111111111111111111111111111111',
-            'amount'  => '1000000',
-        ) ) ) ) ) ) ) );
+            'asset'   => '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+            'payTo'   => $pay_to,
+            'amount'  => $amount,
+        );
+    }
+
+    public function test_string_credential_reaches_settle_with_the_same_payload_as_the_object(): void {
+        $requirement   = self::requirement( '0x1111111111111111111111111111111111111111', '1000000' );
+        $authorization = self::settle_credential( $requirement, array( 'from' => '0xb5004598bBf235A30494339500601D0cD8E5367A', 'to' => $requirement['payTo'] ) );
+        $meta          = self::settle_meta( $requirement );
 
         $bodies = array();
         foreach ( array( $authorization, base64_encode( json_encode( $authorization ) ), json_encode( $authorization ) ) as $credential ) {
@@ -424,47 +479,28 @@ final class PrismHandlerTest extends TestCase {
     }
 
     public function test_tampered_string_credential_is_rejected_before_settle(): void {
-        $authorization = array(
-            'paymentPayload' => array(
-                'network' => 'eip155:84532',
-                'payload' => array( 'authorization' => array( 'to' => '0x2222222222222222222222222222222222222222', 'value' => '1000000' ) ),
-            ),
-        );
-        $meta = array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array( 'config' => array( 'accepts' => array( array(
-            'network' => 'eip155:84532',
-            'payTo'   => '0x1111111111111111111111111111111111111111',
-            'amount'  => '1000000',
-        ) ) ) ) ) ) ) );
+        $requirement   = self::requirement( '0x1111111111111111111111111111111111111111', '1000000' );
+        $authorization = self::settle_credential( $requirement, array( 'from' => '0xb5004598bBf235A30494339500601D0cD8E5367A', 'to' => '0x2222222222222222222222222222222222222222' ) );
 
-        $result = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => base64_encode( json_encode( $authorization ) ), 'checkout_meta' => $meta ) );
+        $result = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => base64_encode( json_encode( $authorization ) ), 'checkout_meta' => self::settle_meta( $requirement ) ) );
 
         $this->assertFalse( $result['success'] );
         $this->assertSame( array(), $GLOBALS['fd_test_requests'] );
     }
 
     public function test_settled_order_meta_records_the_payer_from_the_settle_response(): void {
-        $payer         = '0xb5004598bBf235A30494339500601D0cD8E5367A';
-        $pay_to        = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
-        $authorization = array(
-            'x402Version'    => 2,
-            'paymentPayload' => array(
-                'x402Version' => 2,
-                'accepted'    => array( 'network' => 'eip155:84532', 'asset' => '0x036cbd53842c5426634e7929541ec2318f3dcf7e' ),
-                'payload'     => array( 'authorization' => array( 'from' => $payer, 'to' => $pay_to, 'value' => '100010' ) ),
-            ),
-        );
-        $meta = array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array( 'config' => array( 'accepts' => array( array(
-            'network' => 'eip155:84532',
-            'asset'   => '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
-            'payTo'   => $pay_to,
-            'amount'  => '100010',
-        ) ) ) ) ) ) ) );
+        $payer       = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+        $requirement = self::requirement( '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd', '100010' );
         $GLOBALS['fd_test_http_response'] = array(
             'response' => array( 'code' => 200 ),
             'body'     => json_encode( array( 'success' => true, 'payer' => $payer, 'transaction' => '0xabc', 'network' => 'eip155:84532' ) ),
         );
 
-        $result = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => $authorization, 'checkout_meta' => $meta ) );
+        $result = $this->handler()->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::settle_credential( $requirement, array( 'from' => $payer, 'to' => $requirement['payTo'] ) ),
+            'checkout_meta' => self::settle_meta( $requirement ),
+        ) );
 
         $this->assertTrue( $result['success'] );
         $this->assertSame( $payer, $result['order_meta']['_fd_prism_payer'] );
@@ -473,25 +509,18 @@ final class PrismHandlerTest extends TestCase {
     }
 
     public function test_settled_order_meta_falls_back_to_the_signed_payer_when_prism_sends_none(): void {
-        $payer         = '0xb5004598bBf235A30494339500601D0cD8E5367A';
-        $pay_to        = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
-        $authorization = array(
-            'paymentPayload' => array(
-                'accepted' => array( 'network' => 'eip155:84532' ),
-                'payload'  => array( 'authorization' => array( 'from' => $payer, 'to' => $pay_to, 'value' => '100010' ) ),
-            ),
-        );
-        $meta = array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array( 'config' => array( 'accepts' => array( array(
-            'network' => 'eip155:84532',
-            'payTo'   => $pay_to,
-            'amount'  => '100010',
-        ) ) ) ) ) ) ) );
+        $payer       = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+        $requirement = self::requirement( '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd', '100010' );
         $GLOBALS['fd_test_http_response'] = array(
             'response' => array( 'code' => 200 ),
             'body'     => json_encode( array( 'success' => true, 'payer' => '', 'transaction' => '0xabc' ) ),
         );
 
-        $result = $this->handler()->settle_payment( array( 'checkout_id' => 'c1', 'credential' => $authorization, 'checkout_meta' => $meta ) );
+        $result = $this->handler()->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::settle_credential( $requirement, array( 'from' => $payer, 'to' => $requirement['payTo'] ) ),
+            'checkout_meta' => self::settle_meta( $requirement ),
+        ) );
 
         $this->assertSame( $payer, $result['order_meta']['_fd_prism_payer'] );
     }

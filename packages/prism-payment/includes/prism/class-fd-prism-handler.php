@@ -165,8 +165,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             "$order_label at $store_name"
         );
 
-        if ( ! self::is_payment_requirements( $result ) ) {
-            error_log( 'fd-prism: payment requirements response has no x402Version or accepts, checkout entry omitted' );
+        $quote = FD_Prism_Validator::parse_quote( $result );
+        if ( ! $quote ) {
+            error_log( 'fd-prism: payment requirements response has no settleable x402 v2 quote, checkout entry omitted' );
             return null;
         }
 
@@ -176,7 +177,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
                     array(
                         'id'      => $declaration['id'],
                         'version' => $declaration['version'],
-                        'config'  => $result,
+                        'config'  => $quote,
                     ),
                 ),
             ),
@@ -188,28 +189,22 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
 
 
     public function settle_payment( array $input ): array {
-        $credential = $input['credential'];
-
-        $authorization = $this->decode_credential( $credential );
-        if ( ! $authorization ) {
-            return array(
-                'success' => false,
-                'error'   => 'Invalid x402 credential format',
-            );
-        }
-
-        $validation = FD_Prism_Validator::validate_credential(
-            $authorization,
-            $input['checkout_meta'] ?? null
+        $verified = FD_Prism_Validator::verify(
+            $input['credential'] ?? null,
+            $input['checkout_meta'][ self::HANDLER_ID ]['ucp'][ self::HANDLER_ID ][0]['config'] ?? null
         );
-        if ( is_wp_error( $validation ) ) {
+        if ( is_wp_error( $verified ) ) {
             return array(
                 'success' => false,
-                'error'   => $validation->get_error_message(),
+                'error'   => $verified->get_error_message(),
             );
         }
 
-        $result = $this->client->settle( $authorization );
+        $result = $this->client->settle(
+            $verified['x402_version'],
+            $verified['payment_payload'],
+            $verified['payment_requirements']
+        );
         if ( ! $result ) {
             return array(
                 'success' => false,
@@ -229,33 +224,22 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $network = $result['network']
-            ?? $authorization['paymentPayload']['accepted']['network']
-            ?? $authorization['paymentPayload']['network'] ?? '';
-
-        $payer_info = FD_Prism_Validator::extract_signed_summary( $authorization );
-
+        $requirement   = $verified['payment_requirements'];
         $settled_payer = $result['payer'] ?? '';
-
-        $order_meta = array(
-            '_fd_prism_tx_hash' => $tx_ref,
-            '_fd_prism_network' => $network,
-            '_fd_prism_payer'   => is_string( $settled_payer ) && '' !== $settled_payer
-                ? $settled_payer
-                : ( $payer_info['from'] ?? '' ),
-        );
-        if ( $payer_info ) {
-            $order_meta['_fd_prism_asset']  = $payer_info['asset'] ?? '';
-            $order_meta['_fd_prism_amount'] = $payer_info['value'] ?? '';
-        }
 
         return array(
             'success'               => true,
             'transaction_reference' => $tx_ref,
             'payment_method'        => 'fd_prism_x402',
             'payment_method_title'  => 'Prism Stablecoin',
-            'network'               => $network,
-            'order_meta'            => $order_meta,
+            'network'               => $requirement['network'],
+            'order_meta'            => array(
+                '_fd_prism_tx_hash' => $tx_ref,
+                '_fd_prism_network' => $requirement['network'],
+                '_fd_prism_payer'   => is_string( $settled_payer ) && '' !== $settled_payer ? $settled_payer : $verified['payer'],
+                '_fd_prism_asset'   => $requirement['asset'],
+                '_fd_prism_amount'  => $verified['value'],
+            ),
         );
     }
 
@@ -267,36 +251,5 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         }
 
         return $prism_data['ucp'];
-    }
-
-
-    private static function is_payment_requirements( $requirements ): bool {
-        return is_array( $requirements )
-            && isset( $requirements['x402Version'] )
-            && is_array( $requirements['accepts'] ?? null )
-            && array() !== $requirements['accepts']
-            && array_is_list( $requirements['accepts'] );
-    }
-
-    private function decode_credential( $credential ): ?array {
-        if ( is_string( $credential ) ) {
-            $decoded = base64_decode( $credential, true );
-            if ( $decoded ) {
-                $parsed = json_decode( $decoded, true );
-                if ( is_array( $parsed ) ) {
-                    return $parsed;
-                }
-            }
-            $parsed = json_decode( $credential, true );
-            return is_array( $parsed ) ? $parsed : null;
-        }
-
-        if ( ! is_array( $credential ) ) {
-            return null;
-        }
-        if ( isset( $credential['authorization'] ) && ! isset( $credential['paymentPayload'] ) ) {
-            return $this->decode_credential( $credential['authorization'] );
-        }
-        return $credential;
     }
 }
