@@ -64,6 +64,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-request-context.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-agent-profile-fetcher.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-resolver.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-platform-auth.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-error.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-session-token.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-address.php';

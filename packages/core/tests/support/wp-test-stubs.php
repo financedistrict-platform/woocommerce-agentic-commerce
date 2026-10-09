@@ -557,16 +557,34 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
         private array $params;
         private array $json;
         private string $route;
+        private string $method;
+        private string $body;
 
-        public function __construct( string $route = '/fd-ucp/v1', array $headers = array(), array $params = array(), array $json = array() ) {
+        public function __construct( string $route = '/fd-ucp/v1', array $headers = array(), array $params = array(), array $json = array(), string $method = 'GET', ?string $body = null ) {
             $this->route   = $route;
             $this->headers = array_change_key_case( $headers, CASE_LOWER );
             $this->params  = $params;
             $this->json    = $json;
+            $this->method  = $method;
+            $this->body    = $body ?? ( array() === $json ? '' : json_encode( $json ) );
         }
 
         public function get_header( string $name ): ?string {
-            return $this->headers[ strtolower( $name ) ] ?? null;
+            $value = $this->headers[ strtolower( $name ) ] ?? null;
+            return is_array( $value ) ? implode( ',', $value ) : $value;
+        }
+
+        public function get_header_as_array( string $name ): ?array {
+            $value = $this->headers[ strtolower( $name ) ] ?? null;
+            return null === $value ? null : (array) $value;
+        }
+
+        public function get_method(): string {
+            return $this->method;
+        }
+
+        public function get_body(): string {
+            return $this->body;
         }
 
         public function get_param( string $name ) {

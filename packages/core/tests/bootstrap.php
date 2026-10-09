@@ -107,6 +107,7 @@ require_once $base . '/ucp/class-fd-ucp-version-registry.php';
 require_once $base . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/ucp/class-fd-ucp-agent-profile-fetcher.php';
 require_once $base . '/ucp/class-fd-ucp-version-resolver.php';
+require_once $base . '/ucp/class-fd-ucp-platform-auth.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
 require_once $base . '/ucp/class-fd-ucp-session-token.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
@@ -137,3 +138,4 @@ require_once dirname( __DIR__, 2 ) . '/dummy-payment/fd-woocommerce-dummy-paymen
 
 require_once __DIR__ . '/support/golden-renderer.php';
 require_once __DIR__ . '/support/fixture-profile-fetcher.php';
+require_once __DIR__ . '/support/platform-vectors.php';
