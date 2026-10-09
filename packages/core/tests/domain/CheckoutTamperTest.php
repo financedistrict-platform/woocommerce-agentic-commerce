@@ -545,6 +545,19 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
+    public function test_complete_holds_the_order_when_the_handler_reports_an_inconsistent_settlement(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->handler->result['hold_reason'] = 'Settlement network differs from the quote';
+
+        $response = $this->complete();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_on_hold', $response->get_data()['messages'][0]['code'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
+        $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
     public function test_complete_claims_the_settled_transaction_before_marking_paid(): void {
         $this->quoted_session( 4695, 4695, self::untaxed_totals() );
 

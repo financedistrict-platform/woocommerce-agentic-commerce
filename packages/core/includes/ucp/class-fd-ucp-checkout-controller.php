@@ -563,11 +563,14 @@ class FD_UCP_Checkout_Controller {
         $this->record_settlement( $order, $session, $result, $handler_id );
 
         $conflict = $this->transaction_conflict( $session['id'], $result );
-        $mismatch = FD_UCP_Checkout_Pricing::amount_mismatch( array(
-            'quote'   => $quoted_total,
-            'order'   => FD_UCP_Checkout_Pricing::order_total_minor( $order ),
-            'settled' => $result['settled_amount'] ?? null,
-        ) ) ?? $conflict;
+        $hold_reason = $result['hold_reason'] ?? null;
+        $mismatch    = ( is_string( $hold_reason ) && '' !== $hold_reason ? $hold_reason : null )
+            ?? FD_UCP_Checkout_Pricing::amount_mismatch( array(
+                'quote'   => $quoted_total,
+                'order'   => FD_UCP_Checkout_Pricing::order_total_minor( $order ),
+                'settled' => $result['settled_amount'] ?? null,
+            ) )
+            ?? $conflict;
         if ( null !== $mismatch ) {
             $order->update_status( 'on-hold', "Payment held for review. $mismatch" );
             $this->update_session_row( $session['id'], array(
