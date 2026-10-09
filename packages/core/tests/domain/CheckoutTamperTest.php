@@ -1,12 +1,14 @@
 <?php
 declare( strict_types=1 );
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class CheckoutTamperTest extends TestCase {
 
     private const SESSION_ID = '5f0c2a8e-3b1d-4c6e-9a7f-2d4b8e1c0a91';
     private const SUBTOTAL   = 4200;
+    private const TOKEN      = 'c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55c0ffee66c0ffee77c0ffee88';
 
     private FD_Test_Wpdb $db;
     private object $handler;
@@ -14,17 +16,18 @@ final class CheckoutTamperTest extends TestCase {
     protected function setUp(): void {
         FD_Test_WP::reset();
 
-        $session                      = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
-        $session['agent_fingerprint'] = hash( 'sha256', '' );
-        $session['ucp_version']       = null;
-        $session['expires_at']        = gmdate( 'Y-m-d H:i:s', time() + 3600 );
+        $session                       = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
+        $session['session_token_hash'] = hash( 'sha256', self::TOKEN );
+        $session['ucp_version']        = null;
+        $session['expires_at']         = gmdate( 'Y-m-d H:i:s', time() + 3600 );
 
         $this->db                               = new FD_Test_Wpdb();
         $this->db->sessions[ self::SESSION_ID ] = $session;
         $GLOBALS['wpdb']                        = $this->db;
 
-        FD_Test_Order_Store::$orders     = array( 1001 => new WC_Order() );
+        FD_Test_Order_Store::$orders     = array( 1001 => self::owned_order( self::TOKEN, '0xmine' ) );
         FD_Test_Order_Store::$created    = 0;
+        FD_Test_Order_Store::$refunds    = array();
         FD_Test_Product_Store::$products = array(
             101 => new FD_Test_Product( 101, '18.00' ),
             205 => new FD_Test_Product( 205, '6.00' ),
@@ -69,28 +72,46 @@ final class CheckoutTamperTest extends TestCase {
         return new FD_UCP_Checkout_Controller( $registry );
     }
 
-    private function update( array $body ): WP_REST_Response {
+    private static function owned_order( string $token, string $tx_reference ): WC_Order {
+        $order       = new WC_Order();
+        $order->meta = array(
+            '_fd_ucp_tx_reference'       => $tx_reference,
+            '_fd_ucp_handler_id'         => 'xyz.fd.prism_payment',
+            '_fd_ucp_session_token_hash' => hash( 'sha256', $token ),
+        );
+        return $order;
+    }
+
+    private static function headers( ?string $token ): array {
+        return null === $token ? array() : array( 'UCP-Session-Token' => $token );
+    }
+
+    private static function request( string $route, ?string $token, array $params = array(), array $body = array() ): WP_REST_Request {
+        return new WP_REST_Request( $route, self::headers( $token ), $params, $body );
+    }
+
+    private function update( array $body, ?string $token = self::TOKEN ): WP_REST_Response {
         return $this->controller()->update_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID,
-            array(),
+            self::headers( $token ),
             array( 'id' => self::SESSION_ID ),
             $body
         ) );
     }
 
-    private function create( array $body ): WP_REST_Response {
+    private function create( array $body, array $headers = array() ): WP_REST_Response {
         return $this->controller()->create_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions',
-            array(),
+            $headers,
             array(),
             $body
         ) );
     }
 
-    private function complete(): WP_REST_Response {
+    private function complete( ?string $token = self::TOKEN ): WP_REST_Response {
         return $this->controller()->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            self::headers( $token ),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( array(
                 'handler_id' => $this->handler->id(),
@@ -570,5 +591,250 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 1, FD_Test_Order_Store::$created );
         $this->assertSame( array(), $this->order()->items );
+    }
+
+    public function test_create_returns_a_session_token_once_and_stores_only_its_hash(): void {
+        $response = $this->create( array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) ) );
+
+        $token = $response->get_headers()['UCP-Session-Token'] ?? '';
+        $row   = $this->db->sessions[ wp_generate_uuid4() ];
+        $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $token );
+        $this->assertSame( hash( 'sha256', $token ), $row['session_token_hash'] ?? null );
+        $this->assertStringNotContainsString( $token, json_encode( $row ) );
+        $this->assertStringNotContainsString( $token, json_encode( $response->get_data() ) );
+    }
+
+    public static function foreign_tokens(): array {
+        return array(
+            'no token, same agent header' => array( null ),
+            'wrong token'                 => array( str_repeat( 'f', 64 ) ),
+            'empty token'                 => array( '' ),
+        );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_checkout_session_routes_reject_a_foreign_token( ?string $token ): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $route   = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID;
+        $params  = array( 'id' => self::SESSION_ID );
+        $headers = self::headers( $token ) + array( 'UCP-Agent' => '' );
+
+        $responses = array(
+            'get'      => $this->controller()->get_session( new WP_REST_Request( $route, $headers, $params ) ),
+            'update'   => $this->update( array( 'buyer' => array( 'first_name' => 'Eve' ) ), $token ),
+            'cancel'   => $this->controller()->cancel_session( new WP_REST_Request( $route . '/cancel', $headers, $params ) ),
+            'complete' => $this->complete( $token ),
+        );
+
+        foreach ( $responses as $name => $response ) {
+            $this->assertSame( 403, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
+        }
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $this->assertSame( array(), $this->db->updates );
+    }
+
+    public function test_checkout_session_without_a_stored_token_hash_is_rejected(): void {
+        unset( $this->db->sessions[ self::SESSION_ID ]['session_token_hash'] );
+
+        $response = $this->controller()->get_session( self::request( '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID, self::TOKEN, array( 'id' => self::SESSION_ID ) ) );
+
+        $this->assertSame( 403, $response->get_status(), json_encode( $response->get_data() ) );
+    }
+
+    public function test_checkout_session_get_with_the_session_token_succeeds(): void {
+        $response = $this->controller()->get_session( self::request( '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID, self::TOKEN, array( 'id' => self::SESSION_ID ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( self::SESSION_ID, $response->get_data()['id'] );
+    }
+
+    public function test_idempotent_replay_without_the_session_token_does_not_return_the_session(): void {
+        $this->db->sessions[ self::SESSION_ID ]['idempotency_key'] = 'idem-shared-1';
+
+        $response = $this->create( self::one_item(), array( 'Idempotency-Key' => 'idem-shared-1', 'UCP-Agent' => '' ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertStringNotContainsString( self::SESSION_ID, json_encode( $response->get_data() ) );
+        $this->assertSame( 0, FD_Test_Order_Store::$created );
+    }
+
+    public function test_idempotent_replay_with_the_session_token_returns_the_session(): void {
+        $this->db->sessions[ self::SESSION_ID ]['idempotency_key'] = 'idem-shared-1';
+
+        $response = $this->create( self::one_item(), array( 'Idempotency-Key' => 'idem-shared-1', 'UCP-Session-Token' => self::TOKEN ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( self::SESSION_ID, $response->get_data()['id'] );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_order_list_does_not_return_other_buyers_orders( ?string $token ): void {
+        FD_Test_Order_Store::$orders[1002] = self::owned_order( 'another-buyer', '0xtheirs' );
+
+        $response = ( new FD_UCP_Order_Controller() )->list_orders( new WP_REST_Request( '/fd-ucp/v1/orders', self::headers( $token ) + array( 'UCP-Agent' => '' ) ) );
+
+        $this->assertStringNotContainsString( '0xmine', json_encode( $response->get_data() ) );
+        $this->assertStringNotContainsString( '0xtheirs', json_encode( $response->get_data() ) );
+    }
+
+    public function test_order_list_returns_only_the_order_of_the_presented_token(): void {
+        FD_Test_Order_Store::$orders[1002] = self::owned_order( 'another-buyer', '0xtheirs' );
+
+        $response = ( new FD_UCP_Order_Controller() )->list_orders( self::request( '/fd-ucp/v1/orders', self::TOKEN ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( '0xmine' ), array_column( $response->get_data()['orders'], 'transaction_reference' ) );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_order_get_rejects_a_foreign_token( ?string $token ): void {
+        $response = ( new FD_UCP_Order_Controller() )->get_order( new WP_REST_Request( '/fd-ucp/v1/orders/1001', self::headers( $token ) + array( 'UCP-Agent' => '' ), array( 'id' => 1001 ) ) );
+
+        $this->assertSame( 404, $response->get_status() );
+    }
+
+    public function test_order_without_a_stored_token_hash_is_rejected(): void {
+        $this->order()->meta = array( '_fd_ucp_handler_id' => 'xyz.fd.prism_payment', '_fd_ucp_tx_reference' => '0xmine' );
+
+        $get  = ( new FD_UCP_Order_Controller() )->get_order( self::request( '/fd-ucp/v1/orders/1001', self::TOKEN, array( 'id' => 1001 ) ) );
+        $list = ( new FD_UCP_Order_Controller() )->list_orders( self::request( '/fd-ucp/v1/orders', self::TOKEN ) );
+
+        $this->assertSame( 404, $get->get_status() );
+        $this->assertStringNotContainsString( '0xmine', json_encode( $list->get_data() ) );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_returns_reject_a_foreign_token( ?string $token ): void {
+        $this->order()->status = 'processing';
+        $controller            = new FD_UCP_Returns_Controller();
+        $headers               = self::headers( $token ) + array( 'UCP-Agent' => '' );
+
+        $create = $controller->create_return( new WP_REST_Request( '/fd-ucp/v1/orders/1001/returns', $headers, array( 'id' => 1001 ) ) );
+        $list   = $controller->list_returns( new WP_REST_Request( '/fd-ucp/v1/orders/1001/returns', $headers, array( 'id' => 1001 ) ) );
+
+        $this->assertSame( 404, $create->get_status() );
+        $this->assertSame( 404, $list->get_status() );
+        $this->assertSame( array(), FD_Test_Order_Store::$refunds );
+        $this->assertSame( 'processing', $this->order()->status );
+    }
+
+    public function test_owner_return_request_records_no_refund(): void {
+        $this->order()->status = 'processing';
+
+        $response = ( new FD_UCP_Returns_Controller() )->create_return( self::request( '/fd-ucp/v1/orders/1001/returns', self::TOKEN, array( 'id' => 1001 ) ) );
+
+        $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'requested', $response->get_data()['return']['status'] );
+        $this->assertSame( array(), FD_Test_Order_Store::$refunds );
+        $this->assertSame( 'processing', $this->order()->status );
+        $this->assertCount( 1, $this->order()->get_meta( '_fd_ucp_return_requests' ) );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_buyer_identity_rejects_a_foreign_token( ?string $token ): void {
+        $controller = new FD_UCP_Buyer_Identity_Controller();
+        $route      = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/buyer';
+        $headers    = self::headers( $token ) + array( 'UCP-Agent' => '' );
+
+        $get = $controller->get_buyer( new WP_REST_Request( $route, $headers, array( 'id' => self::SESSION_ID ) ) );
+        $put = $controller->update_buyer( new WP_REST_Request( $route, $headers, array( 'id' => self::SESSION_ID ), array( 'email' => 'eve@example.test' ) ) );
+
+        $this->assertSame( 403, $get->get_status() );
+        $this->assertSame( 403, $put->get_status() );
+        $this->assertSame( array(), $this->db->updates );
+    }
+
+    public function test_buyer_identity_with_the_session_token_succeeds(): void {
+        $response = ( new FD_UCP_Buyer_Identity_Controller() )->get_buyer( self::request( '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/buyer', self::TOKEN, array( 'id' => self::SESSION_ID ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+    }
+
+    #[DataProvider( 'foreign_tokens' )]
+    public function test_promotions_reject_a_foreign_token( ?string $token ): void {
+        $response = ( new FD_UCP_Promotions_Controller() )->apply( new WP_REST_Request(
+            '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/promotions',
+            self::headers( $token ) + array( 'UCP-Agent' => '' ),
+            array( 'id' => self::SESSION_ID ),
+            array( 'code' => 'SAVE10' )
+        ) );
+
+        $this->assertSame( 403, $response->get_status() );
+    }
+
+    public function test_cart_token_guards_the_cart_and_carries_into_its_checkout_session(): void {
+        $carts   = new FD_UCP_Cart_Controller();
+        $created = $carts->create_cart( new WP_REST_Request( '/fd-ucp/v1/carts', array( 'UCP-Agent' => '' ), array(), self::one_item() ) );
+        $token   = $created->get_headers()['UCP-Session-Token'] ?? '';
+        $cart_id = $created->get_data()['id'];
+        $route   = '/fd-ucp/v1/carts/' . $cart_id;
+
+        $foreign  = $carts->get_cart( new WP_REST_Request( $route, array( 'UCP-Agent' => '' ), array( 'id' => $cart_id ) ) );
+        $checkout = $carts->checkout( self::request( $route . '/checkout', $token, array( 'id' => $cart_id ) ) );
+
+        $this->assertSame( 201, $created->get_status() );
+        $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $token );
+        $this->assertSame( 403, $foreign->get_status() );
+        $this->assertSame( 201, $checkout->get_status(), json_encode( $checkout->get_data() ) );
+        $this->assertSame( hash( 'sha256', $token ), $this->db->sessions[ $checkout->get_data()['checkout_session_id'] ]['session_token_hash'] ?? null );
+    }
+
+    public function test_owner_sees_the_recorded_return_request(): void {
+        $controller = new FD_UCP_Returns_Controller();
+        $controller->create_return( self::request( '/fd-ucp/v1/orders/1001/returns', self::TOKEN, array( 'id' => 1001 ) ) );
+
+        $response = $controller->list_returns( self::request( '/fd-ucp/v1/orders/1001/returns', self::TOKEN, array( 'id' => 1001 ) ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array( 'requested' ), array_column( $response->get_data()['returns'], 'status' ) );
+    }
+
+    public function test_every_route_except_the_public_ones_refuses_a_request_without_the_session_token(): void {
+        $public = array(
+            'POST /catalog/search',
+            'POST /catalog/lookup',
+            'POST /checkout-sessions',
+            'POST /carts',
+            'POST /promotions/validate',
+        );
+        $this->db->carts[ self::SESSION_ID ] = array(
+            'id'                 => self::SESSION_ID,
+            'line_items'         => json_encode( array() ),
+            'session_token_hash' => hash( 'sha256', self::TOKEN ),
+            'ucp_version'        => null,
+        );
+        FD_UCP_Plugin::instance()->register_rest_routes();
+
+        $guarded = array();
+        foreach ( FD_Test_WP::$routes as $route ) {
+            foreach ( (array) explode( ',', $route['methods'] ) as $method ) {
+                $name = trim( $method ) . ' ' . $route['route'];
+                if ( in_array( $name, $public, true ) ) {
+                    continue;
+                }
+                $id       = str_starts_with( $route['route'], '/orders' ) ? 1001 : self::SESSION_ID;
+                $path     = preg_replace( '/\(\?P<id>[^)]+\)/', (string) $id, $route['route'] );
+                $response = call_user_func( $route['callback'], new WP_REST_Request(
+                    '/fd-ucp/v1' . $path,
+                    array( 'UCP-Agent' => '' ),
+                    array( 'id' => $id ),
+                    array( 'code' => 'SAVE10', 'items' => array(), 'buyer' => array( 'first_name' => 'Eve' ) )
+                ) );
+                $this->assertContains( $response->get_status(), array( 401, 403, 404 ), $name );
+                $guarded[] = $name;
+            }
+        }
+
+        $this->assertCount( 15, $guarded, implode( ', ', $guarded ) );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( array(), FD_Test_Order_Store::$refunds );
+        $this->assertSame( array(), $this->handler->settled );
+        $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts );
+    }
+
+    private static function one_item(): array {
+        return array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => 1 ) ) );
     }
 }

@@ -50,10 +50,19 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
     class WP_REST_Response {
         public $data;
         public int $status;
+        public array $headers = array();
 
         public function __construct( $data = null, int $status = 200 ) {
             $this->data   = $data ?? array();
             $this->status = $status;
+        }
+
+        public function header( string $key, string $value ): void {
+            $this->headers[ $key ] = $value;
+        }
+
+        public function get_headers(): array {
+            return $this->headers;
         }
 
         public function get_data() {
@@ -98,12 +107,18 @@ require_once $base . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/ucp/class-fd-ucp-agent-profile-fetcher.php';
 require_once $base . '/ucp/class-fd-ucp-version-resolver.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
+require_once $base . '/ucp/class-fd-ucp-session-token.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';
 require_once $base . '/ucp/class-fd-ucp-cart-controller.php';
 require_once $base . '/class-fd-rate-limiter.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-pricing.php';
+require_once $base . '/ucp/class-fd-ucp-catalog-controller.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-controller.php';
+require_once $base . '/ucp/class-fd-ucp-order-controller.php';
+require_once $base . '/ucp/class-fd-ucp-returns-controller.php';
+require_once $base . '/ucp/class-fd-ucp-buyer-identity-controller.php';
+require_once $base . '/ucp/class-fd-ucp-promotions-controller.php';
 require_once $base . '/class-fd-ucp-plugin.php';
 require_once $base . '/admin/class-fd-ucp-settings.php';
 

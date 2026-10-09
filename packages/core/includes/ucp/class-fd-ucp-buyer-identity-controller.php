@@ -86,13 +86,8 @@ class FD_UCP_Buyer_Identity_Controller {
 			return $pin;
 		}
 
-		$stored = $session['agent_fingerprint'] ?? '';
-		if ( ! empty( $stored ) ) {
-			$agent      = $request->get_header( 'ucp-agent' ) ?? '';
-			$request_fp = hash( 'sha256', $agent );
-			if ( ! hash_equals( $stored, $request_fp ) ) {
-				return FD_UCP_Error::response( 'session_not_found', 'Session not found', 403 );
-			}
+		if ( ! FD_UCP_Session_Token::owns_row( $request, $session ) ) {
+			return FD_UCP_Error::response( 'session_ownership', 'A valid UCP-Session-Token is required for this checkout session', 403 );
 		}
 
 		return $session;

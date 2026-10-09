@@ -8,7 +8,7 @@
   "fulfillment": "{\"methods\":[{\"id\":\"shipping_1\",\"type\":\"shipping\",\"line_item_ids\":[\"li_1\",\"li_2\"],\"selected_destination_id\":\"dest_1\",\"destinations\":[{\"street_address\":\"Hauptstrasse 12\",\"address_locality\":\"Berlin\",\"address_region\":\"BE\",\"postal_code\":\"10115\",\"address_country\":\"DE\",\"id\":\"dest_1\"}],\"groups\":[{\"id\":\"package_1\",\"line_item_ids\":[\"li_1\",\"li_2\"],\"selected_option_id\":\"flat_rate1\",\"options\":[{\"id\":\"flat_rate1\",\"title\":\"Flat rate\",\"totals\":[{\"type\":\"total\",\"amount\":495}]}]}]}]}",
   "payment_meta": null,
   "wc_order_id": "1001",
-  "agent_fingerprint": "3b5d5c3712955042212316173ccf37be800c3c7a6c5a54d8cbbb0b3e5e3a8f1d",
+  "session_token_hash": "1fba2f35c2d7b35fab1db13f4e3a9ed9c7e8a953a97bcd9bb760087de59499e4",
   "idempotency_key": null,
   "created_at": "2026-04-20 10:00:00",
   "updated_at": "2026-04-20 10:07:00",

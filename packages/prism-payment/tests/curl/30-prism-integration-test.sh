@@ -60,10 +60,13 @@ echo ""
 
 echo "2. Checkout — payment requirements"
 
-SESSION=$(curl -s -X POST "$UCP_API/checkout-sessions" \
+HDRS=$(mktemp)
+trap 'rm -f "$HDRS"' EXIT
+SESSION=$(curl -s -D "$HDRS" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"' \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
+SESSION_TOKEN=$(tr -d '\r' < "$HDRS" | awk -F': ' 'tolower($1)=="ucp-session-token"{print $2}')
 
 SESSION_ID=$(echo "$SESSION" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 assert_not_empty "checkout session created" "$SESSION_ID"
@@ -131,6 +134,7 @@ echo "5. Amount recalculation on update"
 
 UPDATED=$(curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
   -H "Content-Type: application/json" \
+  -H "UCP-Session-Token: $SESSION_TOKEN" \
   -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"' \
   -d "{
     \"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 2}],
@@ -167,6 +171,7 @@ echo "6. Cancel — payment handlers removed"
 
 CANCELED=$(curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/cancel" \
   -H "Content-Type: application/json" \
+  -H "UCP-Session-Token: $SESSION_TOKEN" \
   -H 'UCP-Agent: profile="https://agent.test/.well-known/ucp"')
 
 CANCEL_STATUS=$(echo "$CANCELED" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null)

@@ -5,6 +5,14 @@ class FD_UCP_Returns_Controller {
 
 	private const NAMESPACE = 'fd-ucp/v1';
 
+	private const REQUESTS_META = '_fd_ucp_return_requests';
+
+	private FD_Rate_Limiter $rate_limiter;
+
+	public function __construct() {
+		$this->rate_limiter = new FD_Rate_Limiter( 10, 60 );
+	}
+
 	public function register_routes(): void {
 		register_rest_route( self::NAMESPACE, '/orders/(?P<id>[\d]+)/returns', array(
 			array(
@@ -26,74 +34,54 @@ class FD_UCP_Returns_Controller {
 			return $order;
 		}
 
-		$items = $request->get_json_params()['items'] ?? array();
+		$rl = $this->rate_limiter->check( 'returns_create' );
+		if ( is_wp_error( $rl ) ) {
+			return FD_UCP_Error::response( $rl->get_error_code(), $rl->get_error_message(), 429 );
+		}
 
-		if ( empty( $items ) ) {
-			$refund_amount     = (float) $order->get_total();
-			$reason            = 'Full order refund';
-			$refund_line_items = array();
-		} else {
-			$refund_amount     = 0;
-			$reason            = '';
-			$refund_line_items = array();
-			$reasons           = array();
+		$items     = $request->get_json_params()['items'] ?? array();
+		$requested = array();
+		$reasons   = array();
 
-			foreach ( $items as $item ) {
-				$line_item_id = (int) ( $item['line_item_id'] ?? 0 );
-				$qty          = (int) ( $item['quantity'] ?? 0 );
+		foreach ( is_array( $items ) ? $items : array() as $item ) {
+			$line_item_id = (int) ( $item['line_item_id'] ?? 0 );
+			$qty          = (int) ( $item['quantity'] ?? 0 );
 
-				$line_item = $order->get_item( $line_item_id );
-				if ( ! $line_item ) {
-					return FD_UCP_Error::response( 'invalid_line_item', "Line item {$line_item_id} not found on this order", 422 );
-				}
-
-				$unit_price     = (float) $line_item->get_total() / max( 1, $line_item->get_quantity() );
-				$item_refund    = $unit_price * $qty;
-				$refund_amount += $item_refund;
-
-				$refund_line_items[ $line_item_id ] = array(
-					'qty'          => $qty,
-					'refund_total' => $item_refund,
-				);
-
-				if ( ! empty( $item['reason'] ) ) {
-					$reasons[] = $item['reason'];
-				}
+			$line_item = $order->get_item( $line_item_id );
+			if ( ! $line_item ) {
+				return FD_UCP_Error::response( 'invalid_line_item', "Line item {$line_item_id} not found on this order", 422 );
+			}
+			if ( $qty < 1 || $qty > $line_item->get_quantity() ) {
+				return FD_UCP_Error::response( 'invalid_quantity', "Quantity for line item {$line_item_id} must be between 1 and {$line_item->get_quantity()}", 422 );
 			}
 
-			$reason = implode( '; ', $reasons );
-		}
-
-		$refund = wc_create_refund( array(
-			'order_id'   => $order->get_id(),
-			'amount'     => $refund_amount,
-			'reason'     => $reason,
-			'line_items' => $refund_line_items,
-		) );
-
-		if ( is_wp_error( $refund ) ) {
-			return FD_UCP_Error::response( 'refund_failed', $refund->get_error_message(), 500 );
-		}
-
-		$refund_items = array();
-		foreach ( $refund->get_items() as $refund_item ) {
-			$refund_items[] = array(
-				'line_item_id' => (string) $refund_item->get_meta( '_refunded_item_id' ),
-				'quantity'     => abs( $refund_item->get_quantity() ),
-				'amount'       => FD_UCP_Formatter::to_minor( abs( (float) $refund_item->get_total() ) ),
+			$requested[] = array(
+				'line_item_id' => (string) $line_item_id,
+				'quantity'     => $qty,
 			);
+			if ( ! empty( $item['reason'] ) ) {
+				$reasons[] = sanitize_text_field( (string) $item['reason'] );
+			}
 		}
+
+		$return = array(
+			'id'         => wp_generate_uuid4(),
+			'status'     => 'requested',
+			'reason'     => $reasons ? implode( '; ', $reasons ) : 'Full order return',
+			'items'      => $requested,
+			'created_at' => current_time( 'mysql', true ),
+		);
+
+		$history   = $this->return_requests( $order );
+		$history[] = $return;
+		$order->update_meta_data( self::REQUESTS_META, $history );
+		$order->add_order_note( 'UCP buyer requested a return: ' . $return['reason'] . '. Review it and issue any refund from the order screen.' );
+		$order->save();
 
 		return new WP_REST_Response( array(
 			'ucp'    => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
-			'refund' => array(
-				'id'     => (string) $refund->get_id(),
-				'amount' => FD_UCP_Formatter::to_minor( (float) $refund->get_amount() ),
-				'status' => 'completed',
-				'reason' => $refund->get_reason(),
-				'items'  => $refund_items,
-			),
-		), 201 );
+			'return' => $return,
+		), 202 );
 	}
 
 	public function list_returns( WP_REST_Request $request ): WP_REST_Response {
@@ -116,7 +104,13 @@ class FD_UCP_Returns_Controller {
 		return new WP_REST_Response( array(
 			'ucp'     => FD_UCP_Request_Context::current()->wire()->envelope( array() ),
 			'refunds' => $refunds,
+			'returns' => $this->return_requests( $order ),
 		), 200 );
+	}
+
+	private function return_requests( WC_Order $order ): array {
+		$requests = $order->get_meta( self::REQUESTS_META );
+		return is_array( $requests ) ? $requests : array();
 	}
 
 	private function resolve_order( WP_REST_Request $request ): WC_Order|WP_REST_Response {
@@ -129,13 +123,8 @@ class FD_UCP_Returns_Controller {
 			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 
-		$fingerprint = $order->get_meta( '_fd_ucp_agent_fingerprint' );
-		if ( $fingerprint ) {
-			$agent      = $request->get_header( 'ucp-agent' ) ?? '';
-			$request_fp = hash( 'sha256', $agent );
-			if ( ! hash_equals( $fingerprint, $request_fp ) ) {
-				return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
-			}
+		if ( ! FD_UCP_Session_Token::owns_order( $request, $order ) ) {
+			return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
 		}
 
 		return $order;

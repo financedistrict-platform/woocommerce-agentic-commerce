@@ -12,8 +12,10 @@ final class FD_Test_WP {
     public static $http_response    = null;
     public static array $http_queue = array();
     public static bool $live_http   = false;
+    public static array $routes     = array();
 
     public static function reset(): void {
+        self::$routes        = array();
         self::$options       = array();
         self::$transients    = array();
         self::$cache         = array();
@@ -53,6 +55,13 @@ function add_option( string $key, $value = '', $deprecated = '', $autoload = nul
         return false;
     }
     FD_Test_WP::$options[ $key ] = $value;
+    return true;
+}
+
+function register_rest_route( string $namespace, string $route, array $args = array() ): bool {
+    foreach ( isset( $args['methods'] ) ? array( $args ) : $args as $endpoint ) {
+        FD_Test_WP::$routes[] = array( 'route' => $route, 'methods' => $endpoint['methods'], 'callback' => $endpoint['callback'] );
+    }
     return true;
 }
 
@@ -351,9 +360,30 @@ function wc_get_order( $id ) {
     return FD_Test_Order_Store::$orders[ (int) $id ] ?? null;
 }
 
+function wc_get_orders( array $args ): array {
+    return array_values( array_filter(
+        FD_Test_Order_Store::$orders,
+        static function ( WC_Order $order ) use ( $args ): bool {
+            foreach ( $args['meta_query'] ?? array() as $clause ) {
+                $value = $order->get_meta( $clause['key'] );
+                if ( 'EXISTS' === ( $clause['compare'] ?? '' ) ? '' === $value : $value !== $clause['value'] ) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    ) );
+}
+
+function wc_create_refund( array $args ) {
+    FD_Test_Order_Store::$refunds[] = $args;
+    return new WP_Error( 'refund_recorded', 'Refund recorded by test stub' );
+}
+
 final class FD_Test_Order_Store {
-    public static int $created = 0;
-    public static array $orders = array();
+    public static int $created  = 0;
+    public static array $orders  = array();
+    public static array $refunds = array();
 }
 
 if ( ! class_exists( 'WP_REST_Request' ) ) {
@@ -474,6 +504,10 @@ class WC_Order {
         return number_format( $this->tax, 2, '.', '' );
     }
 
+    public function get_refunds(): array {
+        return array();
+    }
+
     public function needs_payment(): bool {
         return in_array( $this->status, array( 'pending', 'failed' ), true );
     }
@@ -525,6 +559,7 @@ class WC_Order_Item_Shipping {
 final class FD_Test_Wpdb {
     public string $prefix = 'wp_';
     public array $sessions = array();
+    public array $carts    = array();
     public array $updates  = array();
     public array $calls    = array();
     public array $held     = array();
@@ -548,9 +583,11 @@ final class FD_Test_Wpdb {
     }
 
     public function get_row( string $query, $output = null ) {
-        foreach ( $this->sessions as $id => $row ) {
-            if ( false !== strpos( $query, "'" . $id . "'" ) ) {
-                return $row;
+        foreach ( $this->rows( $query ) as $row ) {
+            foreach ( array( 'id', 'idempotency_key' ) as $column ) {
+                if ( ! empty( $row[ $column ] ) && false !== strpos( $query, "'" . $row[ $column ] . "'" ) ) {
+                    return $row;
+                }
             }
         }
         return null;
@@ -559,15 +596,34 @@ final class FD_Test_Wpdb {
     public function update( string $table, array $data, array $where ): int {
         $this->calls[]   = 'update';
         $this->updates[] = array( $table, $data, $where );
-        if ( isset( $this->sessions[ $where['id'] ] ) ) {
-            $this->sessions[ $where['id'] ] = array_merge( $this->sessions[ $where['id'] ], $data );
+        $rows            = &$this->table( $table );
+        if ( isset( $rows[ $where['id'] ] ) ) {
+            $rows[ $where['id'] ] = array_merge( $rows[ $where['id'] ], $data );
         }
         return 1;
     }
 
     public function insert( string $table, array $data ): int {
-        $this->sessions[ $data['id'] ] = $data;
+        $rows                = &$this->table( $table );
+        $rows[ $data['id'] ] = $data;
         return 1;
+    }
+
+    public function delete( string $table, array $where ): int {
+        $rows = &$this->table( $table );
+        unset( $rows[ $where['id'] ] );
+        return 1;
+    }
+
+    private function rows( string $query ): array {
+        return false !== strpos( $query, 'fd_ucp_carts' ) ? $this->carts : $this->sessions;
+    }
+
+    private function &table( string $table ): array {
+        if ( false !== strpos( $table, 'fd_ucp_carts' ) ) {
+            return $this->carts;
+        }
+        return $this->sessions;
     }
 }
 

@@ -130,6 +130,21 @@ The profile fetch only goes to public HTTPS hosts, has a 3 second timeout and a 
 
 An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 configuration_invalid` and shows an admin notice. The rest of the shop keeps working.
 
+### Session token
+
+`POST /carts` and `POST /checkout-sessions` return a random `UCP-Session-Token` response header once. The store keeps only its SHA-256 hash. Send it back as a `UCP-Session-Token` request header on every later call for that cart, checkout session, its buyer, promotions, order and returns. A checkout session made from a cart keeps the cart's token.
+
+| Request without the right token | Answer |
+|---|---|
+| Cart, checkout session, buyer, promotions | `403` |
+| `GET /orders/{id}`, `/orders/{id}/returns` | `404 order_not_found` |
+| `GET /orders` | `401 session_token_required` |
+| `POST /checkout-sessions` with a used `Idempotency-Key` | `409 idempotency_key_conflict` |
+
+Save the token before doing anything else. It cannot be fetched again, and it does not expire: after checkout it keeps giving access to that order and its returns.
+
+`POST /orders/{id}/returns` records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
+
 ### Prism Console Setup
 
 1. Log in to the [Prism Console](https://apps.fd.xyz)

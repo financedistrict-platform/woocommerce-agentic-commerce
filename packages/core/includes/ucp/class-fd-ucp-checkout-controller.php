@@ -60,6 +60,9 @@ class FD_UCP_Checkout_Controller {
         if ( $idempotency_key ) {
             $existing = $this->load_session_by_idempotency_key( $idempotency_key );
             if ( $existing ) {
+                if ( ! FD_UCP_Session_Token::owns_row( $request, $existing ) ) {
+                    return FD_UCP_Error::response( 'idempotency_key_conflict', 'Idempotency-Key was already used', 409 );
+                }
                 $pin = FD_UCP_Plugin::instance()->pin_session( $request, $existing['ucp_version'] ?? null );
                 if ( null !== $pin ) {
                     return $pin;
@@ -131,7 +134,8 @@ class FD_UCP_Checkout_Controller {
         $payment_meta = $this->registry->prepare_all( $prepare_input );
 
         // Persist session
-        $now = current_time( 'mysql', true );
+        $token = FD_UCP_Session_Token::issue();
+        $now   = current_time( 'mysql', true );
         $this->insert_session( array(
             'id'               => $session_id,
             'status'           => 'incomplete',
@@ -142,7 +146,7 @@ class FD_UCP_Checkout_Controller {
             'fulfillment'      => $fulfillment ? wp_json_encode( $fulfillment ) : null,
             'payment_meta'     => wp_json_encode( $payment_meta ),
             'wc_order_id'      => $order_id,
-            'agent_fingerprint' => $this->compute_fingerprint( $request ),
+            'session_token_hash' => FD_UCP_Session_Token::hash( $token ),
             'idempotency_key'  => $idempotency_key,
             'ucp_version'      => FD_UCP_Request_Context::current()->session_pin(),
             'created_at'       => $now,
@@ -152,9 +156,9 @@ class FD_UCP_Checkout_Controller {
 
         $session = $this->load_session( $session_id );
 
-        return new WP_REST_Response(
-            FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
-            201
+        return FD_UCP_Session_Token::hand_over(
+            new WP_REST_Response( FD_UCP_Formatter::format_checkout_session( $session, $this->registry ), 201 ),
+            $token
         );
     }
 
@@ -171,6 +175,11 @@ class FD_UCP_Checkout_Controller {
         $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
         if ( null !== $pin ) {
             return $pin;
+        }
+
+        $ownership = $this->verify_ownership( $request, $session );
+        if ( is_wp_error( $ownership ) ) {
+            return FD_UCP_Error::response( $ownership->get_error_code(), $ownership->get_error_message(), 403 );
         }
 
         return new WP_REST_Response(
@@ -699,9 +708,7 @@ class FD_UCP_Checkout_Controller {
         if ( ! empty( $handler_id ) ) {
             $order->update_meta_data( '_fd_ucp_handler_id', $handler_id );
         }
-        if ( ! empty( $session['agent_fingerprint'] ) ) {
-            $order->update_meta_data( '_fd_ucp_agent_fingerprint', $session['agent_fingerprint'] );
-        }
+        $order->update_meta_data( FD_UCP_Session_Token::ORDER_META, $session[ FD_UCP_Session_Token::COLUMN ] ?? '' );
 
         foreach ( $settle_result['order_meta'] ?? array() as $meta_key => $meta_value ) {
             $order->update_meta_data( $meta_key, $meta_value );
@@ -724,20 +731,10 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function verify_ownership( WP_REST_Request $request, array $session ): true|WP_Error {
-        $stored = $session['agent_fingerprint'] ?? '';
-        if ( empty( $stored ) ) {
-            return true;
-        }
-        $current = $this->compute_fingerprint( $request );
-        if ( ! hash_equals( $stored, $current ) ) {
-            return new WP_Error( 'session_ownership', 'Session belongs to a different agent' );
+        if ( ! FD_UCP_Session_Token::owns_row( $request, $session ) ) {
+            return new WP_Error( 'session_ownership', 'A valid UCP-Session-Token is required for this checkout session' );
         }
         return true;
-    }
-
-    private function compute_fingerprint( WP_REST_Request $request ): string {
-        $agent = $request->get_header( 'ucp-agent' ) ?? '';
-        return hash( 'sha256', $agent );
     }
 
     // =========================================================================

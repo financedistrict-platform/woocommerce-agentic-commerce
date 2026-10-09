@@ -45,7 +45,7 @@ class FD_UCP_Installer {
             fulfillment LONGTEXT NULL,
             payment_meta LONGTEXT NULL,
             wc_order_id BIGINT NULL,
-            agent_fingerprint VARCHAR(128) NULL,
+            session_token_hash CHAR(64) NULL,
             idempotency_key VARCHAR(128) NULL,
             ucp_version VARCHAR(10) NULL,
             created_at DATETIME NOT NULL,
@@ -60,12 +60,11 @@ class FD_UCP_Installer {
         CREATE TABLE {$wpdb->prefix}fd_ucp_carts (
             id VARCHAR(64) NOT NULL,
             line_items LONGTEXT NOT NULL,
-            agent_fingerprint VARCHAR(128) NULL,
+            session_token_hash CHAR(64) NULL,
             ucp_version VARCHAR(10) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NULL,
-            PRIMARY KEY (id),
-            KEY agent_fingerprint (agent_fingerprint)
+            PRIMARY KEY (id)
         ) $charset;";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
