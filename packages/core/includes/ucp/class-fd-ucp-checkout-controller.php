@@ -439,7 +439,7 @@ class FD_UCP_Checkout_Controller {
         $mismatch     = FD_UCP_Checkout_Pricing::amount_mismatch( array(
             'quote'    => $quoted_total,
             'prepared' => $payment_meta[ $handler_id ]['prepared_amount'] ?? null,
-            'order'    => FD_UCP_Formatter::to_minor( (float) $order->get_total() ),
+            'order'    => FD_UCP_Checkout_Pricing::order_total_minor( $order ),
         ) );
         if ( null !== $mismatch ) {
             $this->update_session_row( $session['id'], array( 'wc_order_id' => $order->get_id() ) );
@@ -474,7 +474,7 @@ class FD_UCP_Checkout_Controller {
         $conflict = $this->transaction_conflict( $session['id'], $result );
         $mismatch = FD_UCP_Checkout_Pricing::amount_mismatch( array(
             'quote'   => $quoted_total,
-            'order'   => FD_UCP_Formatter::to_minor( (float) $order->get_total() ),
+            'order'   => FD_UCP_Checkout_Pricing::order_total_minor( $order ),
             'settled' => $result['settled_amount'] ?? null,
         ) ) ?? $conflict;
         if ( null !== $mismatch ) {
