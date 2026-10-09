@@ -206,6 +206,10 @@ Carts live for 6 hours, then answer `404 cart_not_found`. Every cart read, updat
 
 Items are priced at the current catalog price on create, on every update and again on complete. A payment quote is valid for 15 minutes. After that, `complete` answers `409 quote_expired`; update the session to get a new quote.
 
+Discount totals are negative minor-unit amounts, and `total = subtotal + fulfillment + tax + discount`.
+
+When a settlement is received but held for merchant review (amount mismatch, reused transaction, or a handler-reported inconsistency), `complete` answers `200` with the checkout in `status: requires_escalation`, a `continue_url` (the https order-received page of the held order) and a message `{ "type": "info", "code": "payment_on_hold", "severity": "requires_buyer_review" }`. The order stays `on-hold` and the session cannot be completed again.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/wp-json/fd-ucp/v1/checkout-sessions` | Create checkout session |

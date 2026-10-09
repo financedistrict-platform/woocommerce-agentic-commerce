@@ -9,6 +9,10 @@ class FD_UCP_Formatter {
         return (int) round( $amount * 100 );
     }
 
+    public static function format_hold_response( array $session, WC_Order $order, FD_Payment_Registry $registry ): array {
+        return FD_UCP_Request_Context::current()->wire()->hold_response( $session, $order, $registry );
+    }
+
     public static function format_profile( string $endpoint_base_url, FD_Payment_Registry $registry ): array {
         $context = FD_UCP_Request_Context::current();
         return $context->wire()->profile( $endpoint_base_url, $registry, $context->supported_versions_map() );
