@@ -252,6 +252,22 @@ final class SettingsPlatformsTest extends TestCase {
         $this->assertStringNotContainsString( $key, json_encode( $result ) );
     }
 
+    public function test_cipher_that_does_not_open_to_the_key_of_the_row_is_never_shown(): void {
+        $key   = $this->issue();
+        $other = bin2hex( random_bytes( 32 ) );
+        FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ][0]['key_cipher'] = FD_UCP_Key_Vault::seal( $other );
+        WC_Admin_Settings::reset();
+        FD_Test_WP::$logs = array();
+
+        $this->reveal( array( hash( 'sha256', $key ) ), $this->keep_enabled( $key ) );
+
+        $this->assertSame( array(), WC_Admin_Settings::$messages );
+        $this->assertCount( 1, WC_Admin_Settings::$errors );
+        $this->assertStringContainsString( 'Issue a new key', WC_Admin_Settings::$errors[0] );
+        $this->assertStringNotContainsString( $other, json_encode( array( WC_Admin_Settings::$errors, FD_Test_WP::$logs ) ) );
+        $this->assertSame( array(), FD_Test_WP::$logs );
+    }
+
     public function test_tampered_cipher_asks_for_a_new_key_and_never_outputs_a_partial_value(): void {
         $key  = $this->issue();
         $raw  = base64_decode( FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ][0]['key_cipher'], true );

@@ -112,7 +112,7 @@ class FD_UCP_Settings {
             }
             if ( isset( $reveal[ $platform['key_hash'] ] ) ) {
                 $key = isset( $platform['key_cipher'] ) ? FD_UCP_Key_Vault::open( $platform['key_cipher'] ) : null;
-                if ( null === $key ) {
+                if ( null === $key || ! hash_equals( $platform['key_hash'], hash( 'sha256', $key ) ) ) {
                     $unavailable[] = $platform['profile'];
                 } else {
                     $revealed[] = array( 'profile' => $platform['profile'], 'key' => $key );
