@@ -238,6 +238,20 @@ final class SettingsPlatformsTest extends TestCase {
         $this->assertSame( array(), FD_Test_WP::$logs );
     }
 
+    public function test_reveal_without_openssl_asks_for_a_new_key_instead_of_a_fatal(): void {
+        $key = $this->issue();
+        $row = FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ][0];
+
+        $result = FD_Test_Without_OpenSSL::run(
+            '$r = FD_UCP_Settings::apply_platform_changes( array( ' . var_export( $row, true ) . ' ), array( "fd_ucp_platform_reveal" => array( ' . var_export( $row['key_hash'], true ) . ' => "1" ) ) );'
+            . ' echo json_encode( array( "revealed" => $r["revealed"], "unavailable" => $r["unavailable"] ) );'
+        );
+
+        $this->assertSame( array(), $result['revealed'] );
+        $this->assertSame( array( self::PROFILE ), $result['unavailable'] );
+        $this->assertStringNotContainsString( $key, json_encode( $result ) );
+    }
+
     public function test_tampered_cipher_asks_for_a_new_key_and_never_outputs_a_partial_value(): void {
         $key  = $this->issue();
         $raw  = base64_decode( FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ][0]['key_cipher'], true );

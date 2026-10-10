@@ -8,8 +8,12 @@ final class FD_UCP_Key_Vault {
     private const TAG_LENGTH  = 16;
     private const KEY_CONTEXT = '|fd_ucp_platform_keys';
 
+    public static function available(): bool {
+        return function_exists( 'openssl_encrypt' ) && function_exists( 'openssl_decrypt' );
+    }
+
     public static function seal( string $plain ): ?string {
-        if ( '' === $plain ) {
+        if ( '' === $plain || ! self::available() ) {
             return null;
         }
         $iv  = random_bytes( self::IV_LENGTH );
@@ -24,6 +28,10 @@ final class FD_UCP_Key_Vault {
     }
 
     public static function open( string $sealed ): ?string {
+        if ( ! self::available() ) {
+            return null;
+        }
+
         $raw = base64_decode( $sealed, true );
         if ( false === $raw || strlen( $raw ) <= self::IV_LENGTH + self::TAG_LENGTH ) {
             return null;

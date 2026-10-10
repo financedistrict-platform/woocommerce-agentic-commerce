@@ -80,4 +80,14 @@ final class KeyVaultTest extends TestCase {
 
         $this->assertSame( self::KEY, $plain );
     }
+
+    public function test_sealing_and_opening_return_null_instead_of_a_fatal_when_openssl_is_unavailable(): void {
+        $sealed = FD_UCP_Key_Vault::seal( self::KEY );
+
+        $result = FD_Test_Without_OpenSSL::run(
+            'echo json_encode( array( FD_UCP_Key_Vault::seal( ' . var_export( self::KEY, true ) . ' ), FD_UCP_Key_Vault::open( ' . var_export( $sealed, true ) . ' ) ) );'
+        );
+
+        $this->assertSame( array( null, null ), $result );
+    }
 }
