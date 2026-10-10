@@ -102,10 +102,21 @@ class FD_UCP_Settings {
         $platforms = array();
         $enabled   = is_array( $post['fd_ucp_platform_enabled'] ?? null ) ? $post['fd_ucp_platform_enabled'] : array();
         $deleted   = is_array( $post['fd_ucp_platform_delete'] ?? null ) ? $post['fd_ucp_platform_delete'] : array();
+        $reveal    = is_array( $post['fd_ucp_platform_reveal'] ?? null ) ? $post['fd_ucp_platform_reveal'] : array();
 
+        $revealed    = array();
+        $unavailable = array();
         foreach ( self::clean_platforms( $stored ) as $platform ) {
             if ( isset( $deleted[ $platform['key_hash'] ] ) ) {
                 continue;
+            }
+            if ( isset( $reveal[ $platform['key_hash'] ] ) ) {
+                $key = isset( $platform['key_cipher'] ) ? FD_UCP_Key_Vault::open( $platform['key_cipher'] ) : null;
+                if ( null === $key ) {
+                    $unavailable[] = $platform['profile'];
+                } else {
+                    $revealed[] = array( 'profile' => $platform['profile'], 'key' => $key );
+                }
             }
             $platform['enabled'] = isset( $enabled[ $platform['key_hash'] ] );
             $platforms[]         = $platform;
@@ -123,32 +134,73 @@ class FD_UCP_Settings {
                     FD_UCP_Platform_Auth::MAX_PROFILE_LENGTH
                 );
             } else {
-                $issued      = bin2hex( random_bytes( 32 ) );
-                $platforms[] = array(
-                    'profile'  => $profile,
-                    'key_hash' => hash( 'sha256', $issued ),
-                    'label'    => substr( sanitize_text_field( (string) ( $post['fd_ucp_platform_new_label'] ?? '' ) ), 0, 100 ),
-                    'enabled'  => true,
-                );
+                $key    = bin2hex( random_bytes( 32 ) );
+                $cipher = FD_UCP_Key_Vault::seal( $key );
+                if ( null === $cipher ) {
+                    $errors[] = __( 'The key could not be stored securely, so no key was issued. Check that the OpenSSL extension is available.', 'fd-ucp-for-woocommerce' );
+                } else {
+                    $issued      = $key;
+                    $platforms[] = array(
+                        'profile'    => $profile,
+                        'key_hash'   => hash( 'sha256', $key ),
+                        'key_cipher' => $cipher,
+                        'label'      => substr( sanitize_text_field( (string) ( $post['fd_ucp_platform_new_label'] ?? '' ) ), 0, 100 ),
+                        'enabled'    => true,
+                    );
+                }
             }
         }
 
         return array(
-            'platforms' => $platforms,
-            'issued'    => $issued,
-            'profile'   => $profile,
-            'errors'    => $errors,
+            'platforms'   => $platforms,
+            'issued'      => $issued,
+            'profile'     => $profile,
+            'errors'      => $errors,
+            'revealed'    => $revealed,
+            'unavailable' => $unavailable,
         );
     }
 
+    private static function may_reveal( array $post ): bool {
+        return current_user_can( 'manage_woocommerce' )
+            && is_string( $post['_wpnonce'] ?? null )
+            && (bool) wp_verify_nonce( $post['_wpnonce'], 'woocommerce-settings' );
+    }
+
     public static function save_platforms(): void {
-        $post   = wp_unslash( $_POST );
-        $result = self::apply_platform_changes( self::platforms(), is_array( $post ) ? $post : array() );
+        $post = wp_unslash( $_POST );
+        $post = is_array( $post ) ? $post : array();
+        if ( ! empty( $post['fd_ucp_platform_reveal'] ) && ! self::may_reveal( $post ) ) {
+            unset( $post['fd_ucp_platform_reveal'] );
+            WC_Admin_Settings::add_error( __( 'Platform keys were not shown: the request is not authorised to view them.', 'fd-ucp-for-woocommerce' ) );
+        }
+        $result = self::apply_platform_changes( self::platforms(), $post );
 
         update_option( FD_UCP_Platform_Auth::OPTION, $result['platforms'], false );
 
         foreach ( $result['errors'] as $error ) {
             WC_Admin_Settings::add_error( $error );
+        }
+        foreach ( $result['revealed'] as $revealed ) {
+            wc_get_logger()->info(
+                'UCP platform key revealed',
+                array(
+                    'source'  => 'fd-ucp',
+                    'profile' => $revealed['profile'],
+                    'user_id' => get_current_user_id(),
+                )
+            );
+            WC_Admin_Settings::add_message( sprintf(
+                __( 'API key for %1$s: %2$s. Each view is logged.', 'fd-ucp-for-woocommerce' ),
+                $revealed['profile'],
+                $revealed['key']
+            ) );
+        }
+        foreach ( $result['unavailable'] as $profile ) {
+            WC_Admin_Settings::add_error( sprintf(
+                __( 'No viewable key is stored for %s. Issue a new key for this platform, then disable this one.', 'fd-ucp-for-woocommerce' ),
+                $profile
+            ) );
         }
         if ( null !== $result['issued'] ) {
             WC_Admin_Settings::add_message( sprintf(
@@ -161,17 +213,18 @@ class FD_UCP_Settings {
 
     public static function render_platforms( array $field ): void {
         echo '<tr valign="top"><th scope="row" class="titledesc">' . esc_html__( 'Registered platforms', 'fd-ucp-for-woocommerce' ) . '</th><td class="forminp">';
-        echo '<table class="widefat striped"><thead><tr><th>' . esc_html__( 'Platform profile', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Label', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Enabled', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Delete', 'fd-ucp-for-woocommerce' ) . '</th></tr></thead><tbody>';
+        echo '<table class="widefat striped"><thead><tr><th>' . esc_html__( 'Platform profile', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Label', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Enabled', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Show', 'fd-ucp-for-woocommerce' ) . '</th><th>' . esc_html__( 'Delete', 'fd-ucp-for-woocommerce' ) . '</th></tr></thead><tbody>';
         foreach ( self::platforms() as $platform ) {
             $hash = esc_attr( $platform['key_hash'] );
             echo '<tr><td>' . esc_html( $platform['profile'] ) . '</td><td>' . esc_html( $platform['label'] ) . '</td>'
                 . '<td><input type="checkbox" name="fd_ucp_platform_enabled[' . $hash . ']" value="1"' . ( $platform['enabled'] ? ' checked="checked"' : '' ) . ' /></td>'
+                . '<td><input type="checkbox" name="fd_ucp_platform_reveal[' . $hash . ']" value="1" /></td>'
                 . '<td><input type="checkbox" name="fd_ucp_platform_delete[' . $hash . ']" value="1" /></td></tr>';
         }
         echo '</tbody></table>';
         echo '<p><input type="url" name="fd_ucp_platform_new_profile" class="regular-text" placeholder="https://platform.example/.well-known/ucp" /> ';
         echo '<input type="text" name="fd_ucp_platform_new_label" class="regular-text" maxlength="100" placeholder="' . esc_attr__( 'Label', 'fd-ucp-for-woocommerce' ) . '" /></p>';
-        echo '<p class="description">' . esc_html__( 'Enter a profile URL and save to issue a key for that platform. The key is shown once and only its hash is stored.', 'fd-ucp-for-woocommerce' ) . '</p>';
+        echo '<p class="description">' . esc_html__( 'Enter a profile URL and save to issue a key for that platform. The key is shown when it is issued. Tick Show and save to view a key again; each view is written to WooCommerce > Status > Logs (source fd-ucp). Keys issued before this option existed cannot be shown, so issue a new key and disable the old one.', 'fd-ucp-for-woocommerce' ) . '</p>';
         echo '</td></tr>';
     }
 
@@ -185,12 +238,16 @@ class FD_UCP_Settings {
             if ( null === $profile ) {
                 continue;
             }
-            $clean[] = array(
+            $row = array(
                 'profile'  => $profile,
                 'key_hash' => $entry['key_hash'],
-                'label'    => is_string( $entry['label'] ?? null ) ? $entry['label'] : '',
-                'enabled'  => ! empty( $entry['enabled'] ),
             );
+            if ( is_string( $entry['key_cipher'] ?? null ) && '' !== $entry['key_cipher'] ) {
+                $row['key_cipher'] = $entry['key_cipher'];
+            }
+            $row['label']   = is_string( $entry['label'] ?? null ) ? $entry['label'] : '';
+            $row['enabled'] = ! empty( $entry['enabled'] );
+            $clean[]        = $row;
         }
         return $clean;
     }

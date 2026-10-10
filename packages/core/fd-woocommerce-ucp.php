@@ -82,6 +82,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-cart-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-rate-limiter.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-plugin.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/admin/class-fd-ucp-key-vault.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/admin/class-fd-ucp-settings.php';
 
     FD_UCP_Plugin::instance();

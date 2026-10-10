@@ -123,6 +123,7 @@ require_once $base . '/ucp/class-fd-ucp-returns-controller.php';
 require_once $base . '/ucp/class-fd-ucp-buyer-identity-controller.php';
 require_once $base . '/ucp/class-fd-ucp-promotions-controller.php';
 require_once $base . '/class-fd-ucp-plugin.php';
+require_once $base . '/admin/class-fd-ucp-key-vault.php';
 require_once $base . '/admin/class-fd-ucp-settings.php';
 
 $prism = dirname( __DIR__, 2 ) . '/prism-payment';

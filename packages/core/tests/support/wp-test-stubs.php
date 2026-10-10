@@ -15,6 +15,10 @@ final class FD_Test_WP {
     public static array $uuids      = array();
     public static array $routes     = array();
     public static string $environment = 'production';
+    public static string $salt        = 'test-salt';
+    public static bool $can_manage    = true;
+    public static int $user_id        = 7;
+    public static string $nonce       = 'valid-nonce';
 
     public static function reset(): void {
         self::$routes        = array();
@@ -30,6 +34,9 @@ final class FD_Test_WP {
         self::$http_queue    = array();
         self::$live_http     = false;
         self::$environment   = 'production';
+        self::$salt          = 'test-salt';
+        self::$can_manage    = true;
+        self::$user_id       = 7;
         FD_UCP_Request_Context::set( null );
         WC_Admin_Settings::reset();
     }
@@ -146,6 +153,22 @@ function plugin_dir_path( string $file ): string {
 
 function wc_get_logger(): FD_Test_Logger {
     return new FD_Test_Logger();
+}
+
+function wp_salt( string $scheme = 'auth' ): string {
+    return FD_Test_WP::$salt . '|' . $scheme;
+}
+
+function current_user_can( string $capability ): bool {
+    return FD_Test_WP::$can_manage && 'manage_woocommerce' === $capability;
+}
+
+function get_current_user_id(): int {
+    return FD_Test_WP::$user_id;
+}
+
+function wp_verify_nonce( $nonce, $action = -1 ) {
+    return 'woocommerce-settings' === $action && FD_Test_WP::$nonce === $nonce ? 1 : false;
 }
 
 function wp_parse_url( string $url, int $component = -1 ) {
