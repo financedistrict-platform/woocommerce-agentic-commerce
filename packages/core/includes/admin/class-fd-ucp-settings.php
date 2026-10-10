@@ -80,7 +80,7 @@ class FD_UCP_Settings {
                     FD_UCP_Platform_Auth::ACCESS_AUTHENTICATED => __( 'Authenticated: every platform must sign its requests or send a registered key', 'fd-ucp-for-woocommerce' ),
                     FD_UCP_Platform_Auth::ACCESS_REGISTERED    => __( 'Registered only: only platforms listed below can shop', 'fd-ucp-for-woocommerce' ),
                 ),
-                'desc'    => __( 'Enable Authenticated if the shop holds sensitive buyer data. Open trusts a platform that is not registered on its word, so its carts, checkout sessions and orders are protected only by their unguessable ids. Authenticated accepts a platform only with a valid signature or a registered key. Registered only also requires an enabled key in the list below, even for platforms that sign. To block a platform, disable its keys; deleting them removes the block.', 'fd-ucp-for-woocommerce' ),
+                'desc'    => __( 'Enable Authenticated if the shop holds sensitive buyer data. Open trusts a platform that is not registered on its word, so its carts, checkout sessions and orders are protected by their unguessable ids and by the client-chosen Idempotency-Key (anyone claiming the same unverified profile URL who knows an Idempotency-Key and the same create body can replay the existing session, a different body gets 409). Authenticated accepts a platform only with a valid signature or a registered key. Registered only also requires an enabled key in the list below, even for platforms that sign. To block a platform, disable its keys; deleting them removes the block.', 'fd-ucp-for-woocommerce' ),
             ),
             array(
                 'id'        => FD_UCP_Platform_Auth::OPTION,
