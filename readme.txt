@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.3.10
+Stable tag: 0.3.11
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -71,6 +71,15 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 == Changelog ==
 
+= 0.3.11 =
+* Back up the database before upgrading. The database schema moves to 1.6 and cannot be downgraded without restoring a backup.
+* Every UCP route except catalog identifies the calling platform by request signature or a key you issue. The new Platform access setting (Open by default, Authenticated, Registered only) decides what a request without a credential gets. Platform keys can be viewed again with the Show checkbox. Carts, checkout sessions and orders are visible only to the platform that created them.
+* Order ids on the wire are opaque order keys, and listing orders is removed.
+* A payment held for merchant review answers HTTP 200 with status requires_escalation.
+* Discount totals are negative for UCP 2026-04-08 and later.
+* Prism settles only against the stored payment requirements and accepts a settlement only when its success flag, transaction, network, payer and amount match. A mismatch puts the order on hold. Each signed payment and transaction can be used for one checkout session only.
+* Dummy payment runs only on a development site that sets FD_DUMMY_PAYMENT_ENABLED to true.
+
 = 0.3.10 =
 * Prism handler discovery calls the public GET /ucp/<ucp-version>/handlers route. Needs Prism with that route.
 
@@ -125,6 +134,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 * Credential validation before settlement
 
 == Upgrade Notices ==
+
+= 0.3.11 =
+Back up the database first. The schema moves to 1.6 and cannot be downgraded without a backup. Update the UCP and Prism plugins together.
 
 = 0.3.2 =
 Update the UCP and Prism plugins together.
