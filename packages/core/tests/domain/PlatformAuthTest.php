@@ -53,7 +53,8 @@ final class PlatformAuthTest extends TestCase {
         $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $this->with_key( self::KEY ) ), 'profile_not_trusted', 403 );
     }
 
-    public function test_request_without_credentials_is_signature_missing(): void {
+    public function test_registered_platform_without_credentials_is_signature_missing(): void {
+        FD_Test_Platform_Vectors::register( self::KEY );
         $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . FD_Test_Platform_Vectors::PROFILE . '"' ) );
 
         $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $request ), 'signature_missing', 401 );
@@ -89,6 +90,13 @@ final class PlatformAuthTest extends TestCase {
         $auth = FD_Test_Platform_Vectors::auth( new FD_Test_Fixture_Profile_Fetcher( array() ) );
 
         $this->assert_error( $auth->authenticate( FD_Test_Platform_Vectors::signed( 'es256_post' ) ), 'profile_unreachable', 424 );
+    }
+
+    public function test_unregistered_platform_without_credentials_is_signature_missing_when_authentication_is_required(): void {
+        FD_Test_WP::$options['fd_ucp_platform_access'] = 'authenticated';
+        $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . FD_Test_Platform_Vectors::PROFILE . '"' ) );
+
+        $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $request ), 'signature_missing', 401 );
     }
 
     public function test_profile_urls_normalise_to_one_identity(): void {

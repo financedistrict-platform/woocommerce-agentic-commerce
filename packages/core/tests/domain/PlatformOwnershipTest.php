@@ -8,6 +8,8 @@ final class PlatformOwnershipTest extends TestCase {
     private const SESSION_ID = '5f0c2a8e-3b1d-4c6e-9a7f-2d4b8e1c0a91';
     private const ALPHA      = 'https://alpha.example/ucp';
     private const BETA       = 'https://beta.example/ucp';
+    private const GAMMA      = 'https://gamma.example/ucp';
+    private const DELTA      = 'https://delta.example/ucp';
     private const ALPHA_KEY  = 'alpha-registered-key';
     private const BETA_KEY   = 'beta-registered-key';
     private const ORDER_KEY  = 'wc_order_Zk3q9XvT1aBcD';
@@ -32,6 +34,8 @@ final class PlatformOwnershipTest extends TestCase {
             new FD_Test_Fixture_Profile_Fetcher( array(
                 self::ALPHA => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-08-25' ),
                 self::BETA  => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-08-25' ),
+                self::GAMMA => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-08-25' ),
+                self::DELTA => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-08-25' ),
             ) )
         ) );
 
@@ -99,6 +103,10 @@ final class PlatformOwnershipTest extends TestCase {
 
     private static function as_beta(): array {
         return array( 'UCP-Agent' => 'profile="' . self::BETA . '"', 'X-API-Key' => self::BETA_KEY );
+    }
+
+    private static function keyless( string $profile ): array {
+        return array( 'UCP-Agent' => 'profile="' . $profile . '"' );
     }
 
     private static function item_body(): array {
@@ -359,5 +367,152 @@ final class PlatformOwnershipTest extends TestCase {
         $this->assertSame( 503, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertCount( 1, FD_Test_Order_Store::$made );
         $this->assertSame( 'cancelled', FD_Test_Order_Store::$made[0]->status );
+    }
+
+    private function id_routes(): array {
+        return array_filter( $this->registered_routes(), static fn( array $pair ): bool => str_contains( $pair[1], '(?P<id>' ) );
+    }
+
+    private function assert_every_id_route_hides_the_rows_from( array $headers ): void {
+        $checked = 0;
+        foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
+            $this->seed( 'unverified:' . self::GAMMA );
+            [ $path, $id ] = self::concrete( $route );
+
+            $response = $this->dispatch( $method, $path, $headers, array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+
+            $this->assertSame( 404, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
+            $this->assertSame( array(), $this->db->updates, $name );
+            $this->assertSame( array(), FD_Test_Order_Store::$refunds, $name );
+            $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'], $name );
+            ++$checked;
+        }
+        $this->assertGreaterThanOrEqual( 11, $checked );
+    }
+
+    public function test_a_keyless_platform_creates_carts_and_sessions_under_its_unverified_principal(): void {
+        $cart = $this->dispatch( 'POST', '/carts', self::keyless( self::GAMMA ), array(), self::item_body() );
+        $this->assertSame( 201, $cart->get_status(), json_encode( $cart->get_data() ) );
+        $this->assertSame( 'unverified:' . self::GAMMA, $this->db->carts[ $cart->get_data()['id'] ]['platform_id'] );
+
+        $session = $this->dispatch( 'POST', '/checkout-sessions', self::keyless( self::GAMMA ), array(), self::item_body() );
+        $this->assertSame( 201, $session->get_status(), json_encode( $session->get_data() ) );
+        $this->assertSame( 'unverified:' . self::GAMMA, $this->db->sessions[ $session->get_data()['id'] ]['platform_id'] );
+    }
+
+    public function test_unverified_rows_are_invisible_to_a_registered_platform(): void {
+        $this->assert_every_id_route_hides_the_rows_from( self::as_alpha() );
+        $this->assert_every_id_route_hides_the_rows_from( self::as_beta() );
+    }
+
+    public function test_unverified_rows_are_invisible_to_another_keyless_profile(): void {
+        $this->assert_every_id_route_hides_the_rows_from( self::keyless( self::DELTA ) );
+    }
+
+    public function test_the_unverified_owner_reaches_its_rows_on_every_route_that_loads_one(): void {
+        foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
+            $this->seed( 'unverified:' . self::GAMMA );
+            [ $path, $id ] = self::concrete( $route );
+
+            $owner = $this->dispatch( $method, $path, self::keyless( self::GAMMA ), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+
+            $this->assertNotSame( 404, $owner->get_status(), $name . ' ' . json_encode( $owner->get_data() ) );
+            $this->assertNotSame( 401, $owner->get_status(), $name );
+        }
+    }
+
+    public function test_rows_of_a_registered_platform_stay_hidden_from_a_keyless_caller_after_the_registry_is_emptied(): void {
+        FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ] = array();
+        $checked                                            = 0;
+
+        foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
+            $this->seed( self::GAMMA );
+            [ $path, $id ] = self::concrete( $route );
+
+            $response = $this->dispatch( $method, $path, self::keyless( self::GAMMA ), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+
+            $this->assertSame( 404, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
+            ++$checked;
+        }
+        $this->assertGreaterThanOrEqual( 11, $checked );
+    }
+
+    public function test_a_registered_profile_cannot_be_claimed_keyless_while_it_has_registry_rows(): void {
+        $this->seed( self::ALPHA );
+
+        $response = $this->dispatch( 'GET', '/checkout-sessions/' . self::SESSION_ID, self::keyless( self::ALPHA ), array( 'id' => self::SESSION_ID ) );
+
+        $this->assertSame( 401, $response->get_status() );
+        $this->assertSame( 'signature_missing', $response->get_data()['messages'][0]['code'] ?? null );
+        $this->assertStringContainsString( self::ALPHA, $response->get_data()['messages'][0]['content'] ?? '' );
+    }
+
+    public function test_the_same_idempotency_key_creates_separate_sessions_for_unverified_and_registered_callers(): void {
+        $headers           = array( 'Idempotency-Key' => 'shared-key-2' );
+        FD_Test_WP::$uuids = array( '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555' );
+
+        $unverified = $this->dispatch( 'POST', '/checkout-sessions', self::keyless( self::GAMMA ) + $headers, array(), self::item_body() );
+        $registered = $this->dispatch( 'POST', '/checkout-sessions', self::as_alpha() + $headers, array(), self::item_body() );
+        $replay     = $this->dispatch( 'POST', '/checkout-sessions', self::keyless( self::GAMMA ) + $headers, array(), self::item_body() );
+        $other      = $this->dispatch( 'POST', '/checkout-sessions', self::keyless( self::DELTA ) + $headers, array(), self::item_body() );
+
+        $this->assertSame( 201, $unverified->get_status(), json_encode( $unverified->get_data() ) );
+        $this->assertSame( 201, $registered->get_status(), json_encode( $registered->get_data() ) );
+        $this->assertSame( 200, $replay->get_status(), json_encode( $replay->get_data() ) );
+        $this->assertSame( 201, $other->get_status(), json_encode( $other->get_data() ) );
+        $this->assertSame( $unverified->get_data()['id'], $replay->get_data()['id'] );
+        $this->assertNotSame( $unverified->get_data()['id'], $registered->get_data()['id'] );
+        $this->assertNotSame( $unverified->get_data()['id'], $other->get_data()['id'] );
+    }
+
+    public function test_an_unverified_order_is_readable_only_by_its_creator_through_the_opaque_key(): void {
+        $this->seed( 'unverified:' . self::GAMMA );
+
+        $owner = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::keyless( self::GAMMA ), array( 'id' => self::ORDER_KEY ) );
+        $this->assertSame( 200, $owner->get_status(), json_encode( $owner->get_data() ) );
+        $this->assertSame( self::ORDER_KEY, $owner->get_data()['id'] );
+
+        foreach ( array( self::as_alpha(), self::as_beta(), self::keyless( self::DELTA ) ) as $headers ) {
+            $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, $headers, array( 'id' => self::ORDER_KEY ) );
+
+            $this->assertSame( 404, $response->get_status() );
+            $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] ?? null );
+        }
+    }
+
+    public function test_catalog_routes_stay_public_in_every_mode_whatever_the_credential(): void {
+        $credentials = array( array(), self::keyless( self::ALPHA ), array( 'UCP-Agent' => 'profile="' . self::ALPHA . '"', 'X-API-Key' => 'wrong-key' ), self::as_alpha() );
+
+        foreach ( array( 'open', 'authenticated', 'registered', 'garbage' ) as $mode ) {
+            FD_Test_WP::$options['fd_ucp_platform_access'] = $mode;
+            foreach ( array( '/catalog/search', '/catalog/lookup' ) as $path ) {
+                foreach ( $credentials as $headers ) {
+                    $gated = FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1' . $path, $headers, array(), array(), 'POST' ) );
+
+                    $this->assertNull( $gated, $mode . ' ' . $path . ' ' . json_encode( $headers ) );
+                }
+            }
+        }
+    }
+
+    public function test_protected_routes_follow_the_mode_through_the_gate(): void {
+        $expected = array(
+            'open'          => array( null, 401, 401 ),
+            'authenticated' => array( 401, 401, 401 ),
+            'registered'    => array( 403, 401, 401 ),
+        );
+
+        foreach ( $expected as $mode => [ $unlisted, $listed, $wrong ] ) {
+            FD_Test_WP::$options['fd_ucp_platform_access'] = $mode;
+
+            $gated = FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/carts', self::keyless( self::GAMMA ), array(), array(), 'POST' ) );
+            $this->assertSame( $unlisted, $gated instanceof WP_REST_Response ? $gated->get_status() : null, $mode );
+
+            $gated = FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/carts', self::keyless( self::ALPHA ), array(), array(), 'POST' ) );
+            $this->assertSame( $listed, $gated->get_status(), $mode );
+
+            $gated = FD_UCP_Plugin::instance()->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/carts', array( 'UCP-Agent' => 'profile="' . self::GAMMA . '"', 'X-API-Key' => 'wrong-key' ), array(), array(), 'POST' ) );
+            $this->assertSame( $wrong, $gated->get_status(), $mode );
+        }
     }
 }

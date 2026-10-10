@@ -11,7 +11,7 @@ class FD_UCP_Settings {
         add_filter( 'sanitize_option_' . FD_UCP_Version_Registry::OPTION_CURRENT, array( __CLASS__, 'sanitize_current' ), 10, 2 );
         add_filter( 'sanitize_option_' . FD_UCP_Version_Registry::OPTION_SUPPORTED, array( __CLASS__, 'sanitize_supported' ), 10, 2 );
         add_filter( 'sanitize_option_' . FD_UCP_Version_Registry::OPTION_NEGOTIATION, array( __CLASS__, 'sanitize_negotiation' ), 10, 2 );
-        add_filter( 'sanitize_option_' . FD_UCP_Platform_Auth::OPTION_SIGNED_ACCESS, array( __CLASS__, 'sanitize_signed_access' ), 10, 2 );
+        add_filter( 'sanitize_option_' . FD_UCP_Platform_Auth::OPTION_ACCESS, array( __CLASS__, 'sanitize_platform_access' ), 10, 2 );
         add_action( 'woocommerce_admin_field_fd_ucp_platforms', array( __CLASS__, 'render_platforms' ) );
         add_action( 'woocommerce_update_options_advanced_' . self::SECTION, array( __CLASS__, 'save_platforms' ) );
     }
@@ -67,19 +67,20 @@ class FD_UCP_Settings {
             array(
                 'title' => __( 'Platform access', 'fd-ucp-for-woocommerce' ),
                 'type'  => 'title',
-                'desc'  => __( 'AI agents that do not sign their requests need a key registered for their platform profile. They send it in the X-API-Key header together with the UCP-Agent header. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the agent you are onboarding. Disabling every key of a platform also blocks its signed requests.', 'fd-ucp-for-woocommerce' ),
-                'id'    => 'fd_ucp_platform_access',
+                'desc'  => __( 'AI platforms identify themselves with the UCP-Agent profile URL. Register a platform below to make its key mandatory and give its carts, checkout sessions and orders a private space that only that key can reach. Platforms you do not register are identified only by the profile URL they claim. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the platform you are onboarding.', 'fd-ucp-for-woocommerce' ),
+                'id'    => 'fd_ucp_platform_access_section',
             ),
             array(
-                'title'   => __( 'Signed requests', 'fd-ucp-for-woocommerce' ),
-                'id'      => FD_UCP_Platform_Auth::OPTION_SIGNED_ACCESS,
+                'title'   => __( 'Platform access', 'fd-ucp-for-woocommerce' ),
+                'id'      => FD_UCP_Platform_Auth::OPTION_ACCESS,
                 'type'    => 'select',
-                'default' => FD_UCP_Platform_Auth::SIGNED_ACCESS_OPEN,
+                'default' => FD_UCP_Platform_Auth::ACCESS_OPEN,
                 'options' => array(
-                    FD_UCP_Platform_Auth::SIGNED_ACCESS_OPEN       => __( 'Open: accept any platform whose signature verifies', 'fd-ucp-for-woocommerce' ),
-                    FD_UCP_Platform_Auth::SIGNED_ACCESS_REGISTERED => __( 'Registered only: accept signatures only from platforms listed below', 'fd-ucp-for-woocommerce' ),
+                    FD_UCP_Platform_Auth::ACCESS_OPEN          => __( 'Open (default): any platform can shop, registered platforms must send their key', 'fd-ucp-for-woocommerce' ),
+                    FD_UCP_Platform_Auth::ACCESS_AUTHENTICATED => __( 'Authenticated: every platform must sign its requests or send a registered key', 'fd-ucp-for-woocommerce' ),
+                    FD_UCP_Platform_Auth::ACCESS_REGISTERED    => __( 'Registered only: only platforms listed below can shop', 'fd-ucp-for-woocommerce' ),
                 ),
-                'desc'    => __( 'Open lets any platform in with a valid signature, unless every key listed below for that platform is disabled. A platform you block this way can come back under a different profile URL. Registered only accepts a signed request just from a platform that has an enabled key in the list below, so issue a key for each platform you trust, even if it only signs. To block a platform, disable its keys; deleting them removes the block.', 'fd-ucp-for-woocommerce' ),
+                'desc'    => __( 'Enable Authenticated if the shop holds sensitive buyer data. Open trusts a platform that is not registered on its word, so its carts, checkout sessions and orders are protected only by their unguessable ids. Authenticated accepts a platform only with a valid signature or a registered key. Registered only also requires an enabled key in the list below, even for platforms that sign. To block a platform, disable its keys; deleting them removes the block.', 'fd-ucp-for-woocommerce' ),
             ),
             array(
                 'id'        => FD_UCP_Platform_Auth::OPTION,
@@ -88,7 +89,7 @@ class FD_UCP_Settings {
             ),
             array(
                 'type' => 'sectionend',
-                'id'   => 'fd_ucp_platform_access',
+                'id'   => 'fd_ucp_platform_access_section',
             ),
         );
     }
@@ -276,11 +277,11 @@ class FD_UCP_Settings {
         return self::reject( $option, FD_UCP_Version_Registry::NEGOTIATION_LENIENT );
     }
 
-    public static function sanitize_signed_access( $value, string $option ) {
-        if ( is_string( $value ) && in_array( $value, FD_UCP_Platform_Auth::signed_access_modes(), true ) ) {
+    public static function sanitize_platform_access( $value, string $option ) {
+        if ( is_string( $value ) && in_array( $value, FD_UCP_Platform_Auth::access_modes(), true ) ) {
             return $value;
         }
-        return self::reject( $option, FD_UCP_Platform_Auth::SIGNED_ACCESS_OPEN );
+        return self::reject( $option, FD_UCP_Platform_Auth::ACCESS_OPEN );
     }
 
     private static function reject( string $option, $default ) {
