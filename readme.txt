@@ -20,7 +20,7 @@ Finance District UCP turns any WooCommerce store into an AI-agent-ready storefro
 * Exposes a full catalog search and product lookup API
 * Provides a structured checkout flow: create, update, complete, and cancel sessions
 * Supports order tracking, returns, promotions, and buyer identity
-* Authenticates every calling AI platform by request signature or a key you issue under WooCommerce > Settings > Advanced > UCP versions; carts, checkouts and orders are visible only to the platform that created them; orders are addressed by an opaque id and cannot be listed
+* Authenticates every calling AI platform by request signature or a key you issue under WooCommerce > Settings > Advanced > UCP versions; you can block a platform by disabling its keys and limit signed requests to the platforms you registered; carts, checkouts and orders are visible only to the platform that created them; orders are addressed by an opaque id and cannot be listed
 * Integrates with Finance District Prism for stablecoin settlement (USDC, FDUSD)
 
 **How it works:**
