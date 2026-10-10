@@ -268,6 +268,22 @@ final class SettingsPlatformsTest extends TestCase {
         $this->assertSame( array(), FD_Test_WP::$logs );
     }
 
+    public function test_failed_sealing_on_add_issues_no_key_and_stores_no_row(): void {
+        $existing = bin2hex( random_bytes( 32 ) );
+        $row      = array( 'profile' => 'https://kept.example/ucp', 'key_hash' => hash( 'sha256', $existing ), 'label' => 'Kept', 'enabled' => true );
+
+        $result = FD_Test_Without_OpenSSL::run(
+            '$r = FD_UCP_Settings::apply_platform_changes( array( ' . var_export( $row, true ) . ' ), array( "fd_ucp_platform_new_profile" => ' . var_export( self::PROFILE, true ) . ' ) );'
+            . ' echo json_encode( $r );'
+        );
+
+        $this->assertNull( $result['issued'] );
+        $this->assertCount( 1, $result['platforms'] );
+        $this->assertSame( 'https://kept.example/ucp', $result['platforms'][0]['profile'] );
+        $this->assertCount( 1, $result['errors'] );
+        $this->assertStringContainsString( 'no key was issued', $result['errors'][0] );
+    }
+
     public function test_tampered_cipher_asks_for_a_new_key_and_never_outputs_a_partial_value(): void {
         $key  = $this->issue();
         $raw  = base64_decode( FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ][0]['key_cipher'], true );
