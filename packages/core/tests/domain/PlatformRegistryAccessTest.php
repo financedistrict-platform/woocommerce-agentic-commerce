@@ -7,7 +7,7 @@ final class PlatformRegistryAccessTest extends TestCase {
 
     private const KEY     = 'registered-test-key';
     private const OLD_KEY = 'retired-test-key';
-    private const MODE    = 'fd_ucp_signed_access';
+    private const MODE    = 'fd_ucp_platform_access';
 
     protected function setUp(): void {
         FD_Test_WP::reset();
@@ -100,8 +100,10 @@ final class PlatformRegistryAccessTest extends TestCase {
     public function test_open_mode_is_the_default_and_accepts_an_unregistered_signing_platform(): void {
         $this->assert_accepted( $this->signed_attempt() );
 
-        $this->mode( 'open' );
-        $this->assert_accepted( $this->signed_attempt() );
+        foreach ( array( 'open', 'authenticated' ) as $value ) {
+            $this->mode( $value );
+            $this->assert_accepted( $this->signed_attempt() );
+        }
     }
 
     public function test_registered_mode_refuses_an_unregistered_signing_platform_before_fetching(): void {
@@ -157,7 +159,7 @@ final class PlatformRegistryAccessTest extends TestCase {
     public function test_api_key_path_does_not_depend_on_the_mode(): void {
         FD_Test_Platform_Vectors::register( self::KEY );
 
-        foreach ( array( 'open', 'registered', 'garbage' ) as $value ) {
+        foreach ( array( 'open', 'authenticated', 'registered', 'garbage' ) as $value ) {
             $this->mode( $value );
 
             $this->assert_accepted( FD_Test_Platform_Vectors::auth()->authenticate( $this->with_key( self::KEY ) ) );

@@ -37,7 +37,7 @@ final class InstallerSchemaTest extends TestCase {
         $this->assertNotContains( 'idempotency_key', $sessions['indexes'] );
         $this->assertNotContains( 'session_token_hash', $sessions['columns'] );
         $this->assertNotContains( 'session_token_hash', $this->db->schema['wp_fd_ucp_carts']['columns'] );
-        $this->assertSame( '1.6.0', FD_Test_WP::$options['fd_ucp_db_version'] );
+        $this->assertSame( '1.6.1', FD_Test_WP::$options['fd_ucp_db_version'] );
     }
 
     public function test_upgrade_is_idempotent(): void {
@@ -49,7 +49,7 @@ final class InstallerSchemaTest extends TestCase {
         FD_UCP_Installer::maybe_upgrade();
 
         $this->assertSame( array(), $this->db->alters );
-        $this->assertSame( '1.6.0', FD_Test_WP::$options['fd_ucp_db_version'] );
+        $this->assertSame( '1.6.1', FD_Test_WP::$options['fd_ucp_db_version'] );
     }
 
     public function test_current_schema_is_never_altered(): void {
@@ -69,7 +69,7 @@ final class InstallerSchemaTest extends TestCase {
 
         $this->assertContains( 'platform_idempotency', $this->db->schema['wp_fd_ucp_checkout_sessions']['indexes'] );
         $this->assertNotContains( 'idempotency_key', $this->db->schema['wp_fd_ucp_checkout_sessions']['indexes'] );
-        $this->assertSame( '1.6.0', FD_Test_WP::$options['fd_ucp_db_version'] );
+        $this->assertSame( '1.6.1', FD_Test_WP::$options['fd_ucp_db_version'] );
     }
 
     public function test_failed_alter_leaves_the_schema_untouched_and_the_version_unrecorded(): void {
@@ -94,7 +94,7 @@ final class InstallerSchemaTest extends TestCase {
         $this->db->fail_alters = false;
         FD_UCP_Installer::maybe_upgrade();
 
-        $this->assertSame( '1.6.0', FD_Test_WP::$options['fd_ucp_db_version'] );
+        $this->assertSame( '1.6.1', FD_Test_WP::$options['fd_ucp_db_version'] );
     }
 
     public function test_table_definitions_carry_the_new_columns_and_key_only(): void {

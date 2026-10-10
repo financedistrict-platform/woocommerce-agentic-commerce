@@ -143,30 +143,39 @@ An unknown stored value makes every `/wp-json/fd-ucp/v1` route answer `500 confi
 
 ### Authentication
 
-Every route except `POST /catalog/search`, `POST /catalog/lookup` and `/.well-known/ucp` needs a verified calling platform. Send the platform profile URL in `UCP-Agent` (`profile="https://..."`, HTTPS only) and prove it one of two ways:
+`POST /catalog/search`, `POST /catalog/lookup` and `/.well-known/ucp` are public in every mode. Every other route identifies the calling platform by the profile URL in `UCP-Agent` (`profile="https://..."`, HTTPS only, at most 180 characters). A platform can prove that profile one of two ways:
 
 - **Sign the request.** Add `Signature-Input` and `Signature` (RFC 9421). The store finds the key by `keyid` in the `keys[]` JWK set of the platform profile (ES256 or Ed25519), checks `Content-Digest` against the body and accepts signatures created within the last 5 minutes. The signature must cover `@method`, `@authority`, `@path`, `ucp-agent`, plus `@query` when there is a query string, `content-digest` and `content-type` when there is a body, and `idempotency-key` when that header is sent. `@authority` is the host of the store URL.
 - **Present a registered key.** Ask the merchant for a key and send it as `X-API-Key`. The merchant creates it under **WooCommerce > Settings > Advanced > UCP versions > Platform access** by entering the platform profile URL; the key is shown when it is issued. The store verifies a presented key against its SHA-256 hash and also keeps an AES-256-GCM encrypted copy (key derived from the WordPress `secure_auth` salt) so the merchant can view it again. A key works only together with the `UCP-Agent` profile it was issued for, and the merchant can disable or delete it at any time. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the agent you are onboarding.
 
 To view a key again, tick **Show** on its row and save. The key appears once in the notice after saving and is never printed in the page itself, in logs or in REST responses. Only users with `manage_woocommerce` who submit the WooCommerce settings form can do this, and each view is written to WooCommerce > Status > Logs (source `fd-ucp`) with the platform profile and user id, never the key. Anyone who holds a database dump together with `wp-config.php` (or the generated salts stored in `wp_options`) can decrypt the stored copies, so rotate a key (issue a new one, disable the old one) if either leaks. Changing the WordPress salts makes stored copies unreadable; the row then asks for a new key, while the existing key keeps authenticating. Keys issued before this option existed have no stored copy and also ask for a new key.
 
-The platform list also controls signed requests, in the same **Platform access** section:
+The **Platform access** setting (`fd_ucp_platform_access`, same section) decides what a request without a credential gets:
 
-- **Block a platform.** When every key registered for a profile is disabled, the store refuses that profile on both paths with `403 profile_not_trusted`, before it checks the signature or key. A profile with at least one enabled key is not blocked, so you can rotate keys by issuing a new key and disabling the old one (the old key then gets `401 key_not_found`). Deleting the keys removes the block. In `Open` mode a blocked platform can come back under a different profile URL; use `Registered only` to prevent that.
-- **Signed requests** (`fd_ucp_signed_access`). `Open` (default) accepts a signature from any platform whose published key verifies. `Registered only` accepts a signed request only from a profile that has an enabled key in the list, so issue a key for each signing platform you trust, even if it never sends it. Any other stored value is treated as `Registered only`. The `X-API-Key` path does not depend on this setting.
+| Mode | Behaviour |
+|---|---|
+| `Open` (default) | Any platform can shop. A platform that is registered in the list must send its key or sign, otherwise it gets `401 signature_missing`. A platform that is not registered and sends no credential is accepted as `unverified:<profile URL>`. |
+| `Authenticated` | Every platform must sign its requests or send a registered key. A request without a credential gets `401 signature_missing`. |
+| `Registered only` | Only platforms with an enabled key in the list are served, signed or with their key. Any other platform gets `403 profile_not_trusted`. |
 
-The verified profile URL (lower-case host, no fragment, no trailing slash) is the platform id. A cart, checkout session or order belongs to the platform that created it. Any other platform, and any record created before the upgrade to schema `1.6.0`, gets `404` as if the record did not exist. Open carts and checkout sessions created before that upgrade are unreachable afterwards.
+Enable `Authenticated` if the shop holds sensitive buyer data. In `Open`, a presented credential is always checked: a wrong or unknown `X-API-Key` is `401 key_not_found` and an invalid signature is rejected, they never fall through to `unverified`. An `unverified:` platform is trusted on the profile URL it claims, so its carts, checkout sessions and orders are protected only by their unguessable ids (UUID sessions, opaque `wc_order_...` keys). Register a platform to give it a private space that only its key can reach. Any other stored value of the setting is treated as `Registered only`. The `X-API-Key` path itself does not depend on the mode.
+
+- **Block a platform.** When every key registered for a profile is disabled, the store refuses that profile on every path with `403 profile_not_trusted`, before it checks the signature or key. A profile with at least one enabled key is not blocked, so you can rotate keys by issuing a new key and disabling the old one (the old key then gets `401 key_not_found`). Deleting the keys removes the block. In `Open` mode a blocked platform can still come back under a different profile URL as `unverified`; use `Authenticated` or `Registered only` to prevent that.
+
+The platform id is the verified profile URL (lower-case host, no fragment, no trailing slash), or `unverified:` followed by that URL for a platform without a credential. A registered platform id always starts with `https://`, so an `unverified:` id can never equal one. A cart, checkout session or order belongs to the platform id that created it. Any other platform id, and any record created before the upgrade to schema `1.6.0`, gets `404` as if the record did not exist. The limit of 180 characters keeps the prefixed id within the 191-character storage column. Registering a platform that used to shop without a key starts a new private space: what it created as `unverified` is no longer reachable by it.
+
+On upgrade the old `fd_ucp_signed_access` setting moves to `fd_ucp_platform_access`: `Registered only` stays `Registered only`, any other value becomes `Open`.
 
 | Problem | Answer |
 |---|---|
-| `UCP-Agent` missing, not HTTPS or longer than 191 characters | `400 invalid_profile_url` |
-| No `Signature-Input` and no `X-API-Key` | `401 signature_missing` |
+| `UCP-Agent` missing, not HTTPS or longer than 180 characters | `400 invalid_profile_url` |
+| No `Signature-Input` and no `X-API-Key` from a registered platform, or from any platform in `Authenticated` mode | `401 signature_missing` |
 | Signature malformed, not covering the required parts, outside the 5 minute window or not matching the key | `401 signature_invalid` |
 | `keyid` not in the platform profile, or `X-API-Key` unknown or disabled | `401 key_not_found` |
 | `Content-Digest` does not match the body | `400 digest_mismatch` |
 | Key is not ES256 (P-256) or Ed25519 | `400 algorithm_unsupported` |
 | Platform profile cannot be fetched while verifying a signature | `424 profile_unreachable` |
-| `X-API-Key` is registered for another platform profile, the platform profile has all its keys disabled, or (in `Registered only` mode) a signed request comes from a profile without an enabled key | `403 profile_not_trusted` |
+| `X-API-Key` is registered for another platform profile, the platform profile has all its keys disabled, or (in `Registered only` mode) a request comes from a profile without an enabled key | `403 profile_not_trusted` |
 | Cart, checkout session, buyer, promotions, order or returns of another platform | `404` (`cart_not_found`, `checkout_not_found`, `session_not_found`, `order_not_found`) |
 | `POST /checkout-sessions` repeating an `Idempotency-Key` with a different body | `409 idempotency_key_conflict` |
 | `Idempotency-Key` longer than 128 characters | `400 invalid_idempotency_key` |

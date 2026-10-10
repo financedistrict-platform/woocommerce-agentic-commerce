@@ -140,3 +140,4 @@ require_once dirname( __DIR__, 2 ) . '/dummy-payment/fd-woocommerce-dummy-paymen
 require_once __DIR__ . '/support/golden-renderer.php';
 require_once __DIR__ . '/support/fixture-profile-fetcher.php';
 require_once __DIR__ . '/support/platform-vectors.php';
+require_once __DIR__ . '/support/without-openssl.php';

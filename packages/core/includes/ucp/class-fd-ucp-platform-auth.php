@@ -3,12 +3,14 @@ defined( 'ABSPATH' ) || exit;
 
 final class FD_UCP_Platform_Auth {
 
-    public const OPTION                   = 'fd_ucp_platforms';
-    public const OPTION_SIGNED_ACCESS     = 'fd_ucp_signed_access';
-    public const SIGNED_ACCESS_OPEN       = 'open';
-    public const SIGNED_ACCESS_REGISTERED = 'registered';
-    public const CREATED_WINDOW     = 300;
-    public const MAX_PROFILE_LENGTH = 191;
+    public const OPTION               = 'fd_ucp_platforms';
+    public const OPTION_ACCESS        = 'fd_ucp_platform_access';
+    public const ACCESS_OPEN          = 'open';
+    public const ACCESS_AUTHENTICATED = 'authenticated';
+    public const ACCESS_REGISTERED    = 'registered';
+    public const UNVERIFIED_PREFIX    = 'unverified:';
+    public const CREATED_WINDOW       = 300;
+    public const MAX_PROFILE_LENGTH   = 180;
     private const MAX_MEMBERS       = 3;
     private const STANDING_ENABLED  = 'enabled';
     private const STANDING_REVOKED  = 'revoked';
@@ -47,8 +49,13 @@ final class FD_UCP_Platform_Auth {
         return strlen( $normalised ) > self::MAX_PROFILE_LENGTH ? null : $normalised;
     }
 
-    public static function signed_access_modes(): array {
-        return array( self::SIGNED_ACCESS_OPEN, self::SIGNED_ACCESS_REGISTERED );
+    public static function access_modes(): array {
+        return array( self::ACCESS_OPEN, self::ACCESS_AUTHENTICATED, self::ACCESS_REGISTERED );
+    }
+
+    private static function mode(): string {
+        $stored = get_option( self::OPTION_ACCESS, self::ACCESS_OPEN );
+        return is_string( $stored ) && in_array( $stored, self::access_modes(), true ) ? $stored : self::ACCESS_REGISTERED;
     }
 
     public function authenticate( WP_REST_Request $request ): array {
@@ -65,7 +72,7 @@ final class FD_UCP_Platform_Auth {
         }
 
         if ( '' !== trim( (string) $request->get_header( 'signature-input' ) ) ) {
-            if ( self::STANDING_ENABLED !== $standing && self::SIGNED_ACCESS_OPEN !== get_option( self::OPTION_SIGNED_ACCESS, self::SIGNED_ACCESS_OPEN ) ) {
+            if ( self::STANDING_ENABLED !== $standing && self::ACCESS_REGISTERED === self::mode() ) {
                 return self::failure( 'profile_not_trusted', 403, 'This store accepts signed requests only from registered platforms' );
             }
             return $this->by_signature( $request, $profile, $declared );
@@ -76,7 +83,22 @@ final class FD_UCP_Platform_Auth {
             return self::by_api_key( $key, $profile, $registry );
         }
 
-        return self::failure( 'signature_missing', 401, 'Sign the request or present an X-API-Key registered for your platform' );
+        return self::without_credentials( $profile, $standing );
+    }
+
+    private static function without_credentials( string $profile, string $standing ): array {
+        if ( self::STANDING_ENABLED === $standing ) {
+            return self::failure( 'signature_missing', 401, $profile . ' is registered on this store. Send its X-API-Key or sign the request' );
+        }
+
+        switch ( self::mode() ) {
+            case self::ACCESS_OPEN:
+                return array( 'platform_id' => self::UNVERIFIED_PREFIX . $profile );
+            case self::ACCESS_AUTHENTICATED:
+                return self::failure( 'signature_missing', 401, 'Sign the request or present an X-API-Key registered for your platform' );
+            default:
+                return self::failure( 'profile_not_trusted', 403, 'This store accepts only registered platforms' );
+        }
     }
 
     private static function failure( string $code, int $status, string $message ): array {
@@ -125,7 +147,7 @@ final class FD_UCP_Platform_Auth {
         }
 
         if ( empty( $registered ) ) {
-            return self::failure( 'key_not_found', 401, 'The X-API-Key is not registered or has been disabled' );
+            return self::failure( 'key_not_found', 401, 'The X-API-Key is not registered on this store or has been disabled. Ask the store owner to check WooCommerce > Settings > Advanced > UCP versions > Platform access' );
         }
         if ( ! in_array( $profile, $registered, true ) ) {
             return self::failure( 'profile_not_trusted', 403, 'The X-API-Key is not registered for this platform profile' );

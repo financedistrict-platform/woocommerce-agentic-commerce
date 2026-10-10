@@ -7,11 +7,14 @@ class FD_UCP_Installer {
     public const CARTS_TABLE    = 'fd_ucp_carts';
 
     private const ERROR_THROTTLE = 'fd_ucp_schema_error';
+    private const LEGACY_ACCESS  = 'fd_ucp_signed_access';
+    private const ACCESS         = 'fd_ucp_platform_access';
 
     public static function install(): void {
         self::migrate();
         self::flush_rules();
         self::seed_version_option();
+        self::migrate_platform_access();
         self::record_schema_version();
     }
 
@@ -19,6 +22,7 @@ class FD_UCP_Installer {
         if ( get_option( 'fd_ucp_db_version' ) !== FD_UCP_DB_VERSION ) {
             self::migrate();
             self::seed_version_option();
+            self::migrate_platform_access();
             add_action( 'init', array( __CLASS__, 'flush_rewrite_rules_after_upgrade' ), 20 );
             self::record_schema_version();
         }
@@ -34,6 +38,16 @@ class FD_UCP_Installer {
 
     private static function seed_version_option(): void {
         add_option( FD_UCP_Version_Registry::OPTION_CURRENT, FD_UCP_Version_Registry::LATEST );
+    }
+
+    private static function migrate_platform_access(): void {
+        $legacy = get_option( self::LEGACY_ACCESS, false );
+        if ( false === $legacy ) {
+            return;
+        }
+
+        add_option( self::ACCESS, 'registered' === $legacy ? 'registered' : 'open' );
+        delete_option( self::LEGACY_ACCESS );
     }
 
     private static function migrate(): void {
