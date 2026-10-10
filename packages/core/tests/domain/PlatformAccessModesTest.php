@@ -283,4 +283,47 @@ final class PlatformAccessModesTest extends TestCase {
             $this->auth( $this->bare( self::OTHER ) )['platform_id']
         );
     }
+
+    public function test_a_lone_signature_header_from_an_unregistered_platform_is_a_failed_credential(): void {
+        foreach ( array( 'signature' => 'sig1=:AAAA:', 'signature-input' => 'sig1=("@method");keyid="k"' ) as $header => $value ) {
+            foreach ( array( 'open', 'authenticated' ) as $mode ) {
+                $this->mode( $mode );
+                $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', $header => $value ) );
+
+                $this->assert_error( $this->auth( $request ), 'signature_invalid', 401 );
+            }
+            $this->mode( 'registered' );
+            $this->assert_error( $this->auth( FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', $header => $value ) ) ), 'profile_not_trusted', 403 );
+        }
+    }
+
+    public function test_a_lone_signature_header_from_a_registered_platform_is_a_failed_credential_in_every_mode(): void {
+        FD_Test_Platform_Vectors::register( self::KEY );
+
+        foreach ( self::MODES as $mode ) {
+            $this->mode( $mode );
+            foreach ( array( 'signature' => 'sig1=:AAAA:', 'signature-input' => 'sig1=("@method");keyid="k"' ) as $header => $value ) {
+                $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', $header => $value ) );
+
+                $this->assert_error( $this->auth( $request ), 'signature_invalid', 401 );
+            }
+        }
+    }
+
+    public function test_a_lone_signature_header_beats_a_valid_key_in_every_mode(): void {
+        FD_Test_Platform_Vectors::register( self::KEY );
+
+        foreach ( self::MODES as $mode ) {
+            $this->mode( $mode );
+            $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', 'signature' => 'sig1=:AAAA:', 'x-api-key' => self::KEY ) );
+
+            $this->assert_error( $this->auth( $request ), 'signature_invalid', 401 );
+        }
+    }
+
+    public function test_a_blank_signature_header_alone_counts_as_no_credential(): void {
+        $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', 'signature' => '   ' ) );
+
+        $this->assert_principal( $this->auth( $request ), 'unverified:' . self::PROFILE );
+    }
 }

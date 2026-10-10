@@ -71,7 +71,7 @@ final class FD_UCP_Platform_Auth {
             return self::failure( 'profile_not_trusted', 403, 'This platform profile has been disabled by the store owner' );
         }
 
-        if ( '' !== trim( (string) $request->get_header( 'signature-input' ) ) ) {
+        if ( '' !== trim( (string) $request->get_header( 'signature-input' ) ) || '' !== trim( (string) $request->get_header( 'signature' ) ) ) {
             if ( self::STANDING_ENABLED !== $standing && self::ACCESS_REGISTERED === self::mode() ) {
                 return self::failure( 'profile_not_trusted', 403, 'This store accepts signed requests only from registered platforms' );
             }
