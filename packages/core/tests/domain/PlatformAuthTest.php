@@ -50,7 +50,7 @@ final class PlatformAuthTest extends TestCase {
     public function test_disabled_api_key_is_rejected(): void {
         FD_Test_Platform_Vectors::register( self::KEY, FD_Test_Platform_Vectors::PROFILE, false );
 
-        $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $this->with_key( self::KEY ) ), 'key_not_found', 401 );
+        $this->assert_error( FD_Test_Platform_Vectors::auth()->authenticate( $this->with_key( self::KEY ) ), 'profile_not_trusted', 403 );
     }
 
     public function test_request_without_credentials_is_signature_missing(): void {

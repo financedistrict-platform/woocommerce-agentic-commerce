@@ -102,7 +102,7 @@ final class SettingsPlatformsTest extends TestCase {
 
         $request = FD_Test_Platform_Vectors::request( array( 'ucp-agent' => 'profile="' . self::PROFILE . '"', 'x-api-key' => $key ) );
 
-        $this->assertSame( 'key_not_found', FD_Test_Platform_Vectors::auth()->authenticate( $request )['error']['code'] );
+        $this->assertSame( 'profile_not_trusted', FD_Test_Platform_Vectors::auth()->authenticate( $request )['error']['code'] );
     }
 
     public function test_malformed_stored_entries_are_dropped_on_save(): void {
@@ -123,5 +123,62 @@ final class SettingsPlatformsTest extends TestCase {
 
         $this->assertCount( 1, $field );
         $this->assertFalse( $field[0]['is_option'] );
+    }
+
+    private function signed_access_field(): array {
+        $fields = FD_UCP_Settings::settings( array(), FD_UCP_Settings::SECTION );
+        $found  = array_values( array_filter( $fields, static fn( array $f ): bool => ( $f['id'] ?? '' ) === 'fd_ucp_signed_access' ) );
+        $this->assertCount( 1, $found );
+        return $found[0];
+    }
+
+    public function test_signed_access_is_a_select_in_the_platform_access_section(): void {
+        $fields = FD_UCP_Settings::settings( array(), FD_UCP_Settings::SECTION );
+        $ids    = array_column( $fields, 'id' );
+        $field  = $this->signed_access_field();
+
+        $this->assertSame( 'select', $field['type'] );
+        $this->assertSame( 'open', $field['default'] );
+        $this->assertSame( array( 'open', 'registered' ), array_keys( $field['options'] ) );
+        $this->assertNotSame( '', trim( (string) ( $field['desc'] ?? '' ) ) );
+        $this->assertGreaterThan( array_search( 'fd_ucp_platform_access', $ids, true ), array_search( 'fd_ucp_signed_access', $ids, true ) );
+        $this->assertLessThan( array_search( 'fd_ucp_platform_access', array_reverse( $ids, true ), true ), array_search( 'fd_ucp_signed_access', $ids, true ) );
+    }
+
+    public function test_signed_access_field_is_wired_to_the_option_the_auth_class_reads(): void {
+        $field = $this->signed_access_field();
+
+        $this->assertSame( FD_UCP_Platform_Auth::OPTION_SIGNED_ACCESS, $field['id'] );
+        $this->assertSame( FD_UCP_Platform_Auth::signed_access_modes(), array_keys( $field['options'] ) );
+        $this->assertSame( FD_UCP_Platform_Auth::SIGNED_ACCESS_OPEN, $field['default'] );
+    }
+
+    public function test_signed_access_option_is_sanitised_by_the_settings_filter(): void {
+        FD_UCP_Settings::init();
+
+        $hooks = FD_Test_WP::$hooks[ 'sanitize_option_' . FD_UCP_Platform_Auth::OPTION_SIGNED_ACCESS ] ?? array();
+
+        $this->assertSame( array( array( FD_UCP_Settings::class, 'sanitize_signed_access' ) ), array_column( $hooks, 0 ) );
+    }
+
+    public function test_signed_access_sanitiser_keeps_the_two_values(): void {
+        $this->assertSame( 'open', FD_UCP_Settings::sanitize_signed_access( 'open', 'fd_ucp_signed_access' ) );
+        $this->assertSame( 'registered', FD_UCP_Settings::sanitize_signed_access( 'registered', 'fd_ucp_signed_access' ) );
+        $this->assertSame( array(), WC_Admin_Settings::$errors );
+    }
+
+    public function test_signed_access_sanitiser_defaults_to_open_when_nothing_is_stored(): void {
+        foreach ( array( 'closed', '', 'OPEN', null, array(), 1 ) as $value ) {
+            WC_Admin_Settings::reset();
+
+            $this->assertSame( 'open', FD_UCP_Settings::sanitize_signed_access( $value, 'fd_ucp_signed_access' ) );
+            $this->assertCount( 1, WC_Admin_Settings::$errors );
+        }
+    }
+
+    public function test_signed_access_sanitiser_keeps_the_stored_value_on_invalid_input(): void {
+        FD_Test_WP::$options['fd_ucp_signed_access'] = 'registered';
+
+        $this->assertSame( 'registered', FD_UCP_Settings::sanitize_signed_access( 'closed', 'fd_ucp_signed_access' ) );
     }
 }

@@ -148,6 +148,11 @@ Every route except `POST /catalog/search`, `POST /catalog/lookup` and `/.well-kn
 - **Sign the request.** Add `Signature-Input` and `Signature` (RFC 9421). The store finds the key by `keyid` in the `keys[]` JWK set of the platform profile (ES256 or Ed25519), checks `Content-Digest` against the body and accepts signatures created within the last 5 minutes. The signature must cover `@method`, `@authority`, `@path`, `ucp-agent`, plus `@query` when there is a query string, `content-digest` and `content-type` when there is a body, and `idempotency-key` when that header is sent. `@authority` is the host of the store URL.
 - **Present a registered key.** Ask the merchant for a key and send it as `X-API-Key`. The merchant creates it under **WooCommerce > Settings > Advanced > UCP versions > Platform access** by entering the platform profile URL; the key is shown once and only its SHA-256 hash is stored. A key works only together with the `UCP-Agent` profile it was issued for, and the merchant can disable or delete it at any time. A key grants the identity of the profile URL it is registered for, so register only profile URLs you have confirmed belong to the agent you are onboarding.
 
+The platform list also controls signed requests, in the same **Platform access** section:
+
+- **Block a platform.** When every key registered for a profile is disabled, the store refuses that profile on both paths with `403 profile_not_trusted`, before it checks the signature or key. A profile with at least one enabled key is not blocked, so you can rotate keys by issuing a new key and disabling the old one (the old key then gets `401 key_not_found`). Deleting the keys removes the block. In `Open` mode a blocked platform can come back under a different profile URL; use `Registered only` to prevent that.
+- **Signed requests** (`fd_ucp_signed_access`). `Open` (default) accepts a signature from any platform whose published key verifies. `Registered only` accepts a signed request only from a profile that has an enabled key in the list, so issue a key for each signing platform you trust, even if it never sends it. Any other stored value is treated as `Registered only`. The `X-API-Key` path does not depend on this setting.
+
 The verified profile URL (lower-case host, no fragment, no trailing slash) is the platform id. A cart, checkout session or order belongs to the platform that created it. Any other platform, and any record created before the upgrade to schema `1.6.0`, gets `404` as if the record did not exist. Open carts and checkout sessions created before that upgrade are unreachable afterwards.
 
 | Problem | Answer |
@@ -159,7 +164,7 @@ The verified profile URL (lower-case host, no fragment, no trailing slash) is th
 | `Content-Digest` does not match the body | `400 digest_mismatch` |
 | Key is not ES256 (P-256) or Ed25519 | `400 algorithm_unsupported` |
 | Platform profile cannot be fetched while verifying a signature | `424 profile_unreachable` |
-| `X-API-Key` is registered for another platform profile | `403 profile_not_trusted` |
+| `X-API-Key` is registered for another platform profile, the platform profile has all its keys disabled, or (in `Registered only` mode) a signed request comes from a profile without an enabled key | `403 profile_not_trusted` |
 | Cart, checkout session, buyer, promotions, order or returns of another platform | `404` (`cart_not_found`, `checkout_not_found`, `session_not_found`, `order_not_found`) |
 | `POST /checkout-sessions` repeating an `Idempotency-Key` with a different body | `409 idempotency_key_conflict` |
 | `Idempotency-Key` longer than 128 characters | `400 invalid_idempotency_key` |

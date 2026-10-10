@@ -3,10 +3,16 @@ defined( 'ABSPATH' ) || exit;
 
 final class FD_UCP_Platform_Auth {
 
-    public const OPTION             = 'fd_ucp_platforms';
+    public const OPTION                   = 'fd_ucp_platforms';
+    public const OPTION_SIGNED_ACCESS     = 'fd_ucp_signed_access';
+    public const SIGNED_ACCESS_OPEN       = 'open';
+    public const SIGNED_ACCESS_REGISTERED = 'registered';
     public const CREATED_WINDOW     = 300;
     public const MAX_PROFILE_LENGTH = 191;
     private const MAX_MEMBERS       = 3;
+    private const STANDING_ENABLED  = 'enabled';
+    private const STANDING_REVOKED  = 'revoked';
+    private const STANDING_UNKNOWN  = 'unknown';
     private const P256_SPKI_PREFIX  = '3059301306072a8648ce3d020106082a8648ce3d030107034200';
 
     private FD_UCP_Agent_Profile_Fetcher $fetcher;
@@ -41,6 +47,10 @@ final class FD_UCP_Platform_Auth {
         return strlen( $normalised ) > self::MAX_PROFILE_LENGTH ? null : $normalised;
     }
 
+    public static function signed_access_modes(): array {
+        return array( self::SIGNED_ACCESS_OPEN, self::SIGNED_ACCESS_REGISTERED );
+    }
+
     public function authenticate( WP_REST_Request $request ): array {
         $declared = (string) FD_UCP_Version_Resolver::profile_url( $request->get_header( 'ucp-agent' ) );
         $profile  = self::normalise_profile_url( $declared );
@@ -48,13 +58,22 @@ final class FD_UCP_Platform_Auth {
             return self::failure( 'invalid_profile_url', 400, 'UCP-Agent must carry the https profile URL of the calling platform' );
         }
 
+        $registry = self::registry();
+        $standing = self::standing( $registry, $profile );
+        if ( self::STANDING_REVOKED === $standing ) {
+            return self::failure( 'profile_not_trusted', 403, 'This platform profile has been disabled by the store owner' );
+        }
+
         if ( '' !== trim( (string) $request->get_header( 'signature-input' ) ) ) {
+            if ( self::STANDING_ENABLED !== $standing && self::SIGNED_ACCESS_OPEN !== get_option( self::OPTION_SIGNED_ACCESS, self::SIGNED_ACCESS_OPEN ) ) {
+                return self::failure( 'profile_not_trusted', 403, 'This store accepts signed requests only from registered platforms' );
+            }
             return $this->by_signature( $request, $profile, $declared );
         }
 
         $key = trim( (string) $request->get_header( 'x-api-key' ) );
         if ( '' !== $key ) {
-            return self::by_api_key( $key, $profile );
+            return self::by_api_key( $key, $profile, $registry );
         }
 
         return self::failure( 'signature_missing', 401, 'Sign the request or present an X-API-Key registered for your platform' );
@@ -64,18 +83,44 @@ final class FD_UCP_Platform_Auth {
         return array( 'error' => array( 'code' => $code, 'status' => $status, 'message' => $message ) );
     }
 
-    private static function by_api_key( string $key, string $profile ): array {
-        $presented = hash( 'sha256', $key );
-        $registered = array();
+    private static function registry(): array {
+        $stored   = get_option( self::OPTION, array() );
+        $registry = array();
 
-        $platforms = get_option( self::OPTION, array() );
-        foreach ( is_array( $platforms ) ? $platforms : array() as $entry ) {
+        foreach ( is_array( $stored ) ? $stored : array() as $entry ) {
             if ( ! is_array( $entry ) || ! is_string( $entry['key_hash'] ?? null ) ) {
                 continue;
             }
-            $equal = hash_equals( strtolower( $entry['key_hash'] ), $presented );
-            if ( $equal && ! empty( $entry['enabled'] ) ) {
-                $registered[] = self::normalise_profile_url( (string) ( $entry['profile'] ?? '' ) );
+            $registry[] = array(
+                'profile'  => self::normalise_profile_url( (string) ( $entry['profile'] ?? '' ) ),
+                'key_hash' => strtolower( $entry['key_hash'] ),
+                'enabled'  => ! empty( $entry['enabled'] ),
+            );
+        }
+        return $registry;
+    }
+
+    private static function standing( array $registry, string $profile ): string {
+        $standing = self::STANDING_UNKNOWN;
+        foreach ( $registry as $entry ) {
+            if ( $profile !== $entry['profile'] ) {
+                continue;
+            }
+            if ( $entry['enabled'] ) {
+                return self::STANDING_ENABLED;
+            }
+            $standing = self::STANDING_REVOKED;
+        }
+        return $standing;
+    }
+
+    private static function by_api_key( string $key, string $profile, array $registry ): array {
+        $presented  = hash( 'sha256', $key );
+        $registered = array();
+
+        foreach ( $registry as $entry ) {
+            if ( $entry['enabled'] && hash_equals( $entry['key_hash'], $presented ) ) {
+                $registered[] = $entry['profile'];
             }
         }
 
