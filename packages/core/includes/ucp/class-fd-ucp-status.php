@@ -11,6 +11,10 @@ class FD_UCP_Status {
             return $session['status'];
         }
 
+        if ( 'payment_pending' === $session['status'] ) {
+            return 'complete_in_progress';
+        }
+
         $missing = self::missing_requirements( $session );
         if ( empty( $missing ) ) {
             return 'ready_for_complete';

@@ -3,6 +3,8 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_Prism_Client {
 
+    private const SETTLE_TIMEOUT = 45;
+
     private string $api_url;
     private string $api_key;
 
@@ -26,11 +28,33 @@ class FD_Prism_Client {
         ) );
     }
 
-    public function settle( int $x402_version, array $payment_payload, array $payment_requirements ): ?array {
-        return $this->post( "/api/v{$x402_version}/payment/settle", array(
-            'paymentPayload'      => $payment_payload,
-            'paymentRequirements' => $payment_requirements,
+    public function settle( int $x402_version, array $payment_payload, array $payment_requirements ): array {
+        $path     = "/api/v{$x402_version}/payment/settle";
+        $response = wp_remote_post( $this->api_url . $path, array(
+            'headers' => $this->headers(),
+            'body'    => wp_json_encode( array(
+                'paymentPayload'      => $payment_payload,
+                'paymentRequirements' => $payment_requirements,
+            ) ),
+            'timeout' => self::SETTLE_TIMEOUT,
         ) );
+
+        if ( is_wp_error( $response ) ) {
+            wc_get_logger()->error( "POST $path failed: " . $response->get_error_message(), array( 'source' => 'fd-prism' ) );
+            return array( 'status' => 0, 'body' => null );
+        }
+
+        $status  = (int) wp_remote_retrieve_response_code( $response );
+        $raw     = wp_remote_retrieve_body( $response );
+        $decoded = json_decode( $raw, true );
+        if ( $status < 200 || $status >= 300 || ! is_array( $decoded ) ) {
+            wc_get_logger()->error( "POST $path returned HTTP $status: " . substr( $raw, 0, 500 ), array( 'source' => 'fd-prism' ) );
+        }
+
+        return array(
+            'status' => $status,
+            'body'   => is_array( $decoded ) ? $decoded : null,
+        );
     }
 
     private function get( string $path ): ?array {

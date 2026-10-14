@@ -9,6 +9,8 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
     private const STALE_PREFIX      = '_fd_prism_discovery_stale_';
     private const CACHE_TTL         = 300;
     private const INSTRUMENT_TYPES  = array( 'x402', 'tokenized', 'default' );
+    private const PENDING_REASON    = 'settlement_pending';
+    private const REVIEW_REASONS    = array( 'authorization_consumed', 'settlement_unresolved' );
 
     private FD_Prism_Client $client;
     private string $api_url;
@@ -214,12 +216,21 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             );
         }
 
-        $result = $this->client->settle(
+        $response = $this->client->settle(
             $verified['x402_version'],
             $verified['payment_payload'],
             $verified['payment_requirements']
         );
-        if ( ! $result ) {
+        if ( $this->is_unconfirmed( $response ) ) {
+            return array(
+                'success' => false,
+                'pending' => true,
+                'error'   => 'Settlement outcome is not confirmed yet',
+            );
+        }
+
+        $result = $response['body'];
+        if ( ! is_array( $result ) ) {
             return array(
                 'success' => false,
                 'error'   => 'Prism settlement request failed',
@@ -229,8 +240,16 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         $success = $result['success'] ?? null;
         $tx_ref  = $this->transaction_reference( $result );
         if ( true !== $success && ( false === $success || '' === $tx_ref ) ) {
-            $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'rejected' );
             $reason = $result['error'] ?? $result['errorReason'] ?? $result['reason'] ?? null;
+            if ( $response['status'] < 300 && in_array( $reason, self::REVIEW_REASONS, true ) ) {
+                $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'needs review' );
+                return array(
+                    'success' => false,
+                    'review'  => true,
+                    'error'   => "Prism settlement needs review: $reason",
+                );
+            }
+            $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'rejected' );
             return array(
                 'success' => false,
                 'error'   => is_string( $reason ) && '' !== $reason ? $reason : 'Settlement failed',
@@ -264,6 +283,18 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             $settlement['hold_reason'] = $hold;
         }
         return $settlement;
+    }
+
+    private function is_unconfirmed( array $response ): bool {
+        $status = $response['status'];
+        if ( $status >= 400 && $status < 500 && ! in_array( $status, array( 408, 429 ), true ) ) {
+            return false;
+        }
+        if ( $status < 200 || $status >= 300 ) {
+            return true;
+        }
+        $body = $response['body'];
+        return ! is_array( $body ) || array() === $body || self::PENDING_REASON === ( $body['errorReason'] ?? null );
     }
 
     private function transaction_reference( array $result ): string {

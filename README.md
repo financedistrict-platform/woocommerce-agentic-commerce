@@ -226,6 +226,8 @@ Discount totals are negative minor-unit amounts, and `total = subtotal + fulfill
 
 When a settlement is received but held for merchant review (amount mismatch, reused transaction, or a handler-reported inconsistency), `complete` answers `200` with the checkout in `status: requires_escalation`, a `continue_url` (the https order-received page of the held order) and an error message `{ "type": "error", "code": "payment_on_hold", "severity": "requires_buyer_review" }`. `GET` on the held session returns the same shape to the owning platform. The order stays `on-hold` and a repeated `complete` answers `409 session_requires_escalation`.
 
+When the settlement outcome is unknown (timeout, transport error, gateway 5xx or a pending settlement), the money may already have moved. `complete` then answers `202` with the checkout in `status: complete_in_progress` and a `payment_pending` message. The WooCommerce order stays `pending`. Call `complete` again with the same payment credential until it answers `200`. A different credential answers `409 payment_pending_mismatch`, and `update` and `cancel` answer `409`. If the gateway reports the signed payment as already used or unresolved, the order is held for merchant review as above.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/wp-json/fd-ucp/v1/checkout-sessions` | Create checkout session |
