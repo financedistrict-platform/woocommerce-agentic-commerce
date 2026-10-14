@@ -9,6 +9,17 @@ class FD_UCP_Agent_Profile_Fetcher {
     public const TIMEOUT     = 3;
     public const REFRESH_INTERVAL = 60;
 
+    private const NON_PUBLIC_IPV4 = array(
+        array( '100.64.0.0', 10 ),
+        array( '192.0.0.0', 24 ),
+        array( '192.0.2.0', 24 ),
+        array( '198.18.0.0', 15 ),
+        array( '198.51.100.0', 24 ),
+        array( '203.0.113.0', 24 ),
+        array( '224.0.0.0', 4 ),
+        array( '240.0.0.0', 4 ),
+    );
+
     private bool $allow_loopback;
     private bool $fetched = false;
 
@@ -189,7 +200,7 @@ class FD_UCP_Agent_Profile_Fetcher {
             if ( $loopback && '127.0.0.1' === $ip ) {
                 continue;
             }
-            if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+            if ( ! self::is_public_ip( $ip ) ) {
                 return null;
             }
         }
@@ -199,6 +210,24 @@ class FD_UCP_Agent_Profile_Fetcher {
             'port' => (int) ( $parts['port'] ?? ( 'https' === $scheme ? 443 : 80 ) ),
             'ip'   => $ips[0],
         );
+    }
+
+    private static function is_public_ip( string $ip ): bool {
+        if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+            return false;
+        }
+
+        $long = ip2long( $ip );
+        if ( false === $long ) {
+            return true;
+        }
+        foreach ( self::NON_PUBLIC_IPV4 as list( $network, $prefix ) ) {
+            $mask = -1 << ( 32 - $prefix );
+            if ( ( $long & $mask ) === ( ip2long( $network ) & $mask ) ) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected function resolve_host( string $host ): array {

@@ -3,6 +3,18 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Status {
 
+    public static function is_mutable( array $session ): bool {
+        return 'incomplete' === ( $session['status'] ?? null ) && ! self::is_past_expiry( $session );
+    }
+
+    public static function closed_as( array $session ): string {
+        return self::is_past_expiry( $session ) ? 'expired' : (string) ( $session['status'] ?? '' );
+    }
+
+    private static function is_past_expiry( array $session ): bool {
+        return ! empty( $session['expires_at'] ) && strtotime( $session['expires_at'] ) < time();
+    }
+
     /**
      * Derive UCP checkout status from session data.
      */

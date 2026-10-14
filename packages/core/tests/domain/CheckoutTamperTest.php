@@ -1733,6 +1733,102 @@ final class CheckoutTamperTest extends TestCase {
         );
     }
 
+    #[DataProvider( 'settling_and_closed_session_statuses' )]
+    public function test_promotion_is_refused_on_a_session_that_is_not_incomplete( string $status ): void {
+        FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
+        $this->db->sessions[ self::SESSION_ID ]['status'] = $status;
+
+        $response = $this->promote( 'SAVE10' );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 4695, $this->stored_total() );
+        $this->assertSame( array(), $this->db->updates );
+    }
+
+    #[DataProvider( 'settling_and_closed_session_statuses' )]
+    public function test_update_session_is_refused_on_a_session_that_is_not_incomplete( string $status ): void {
+        $this->db->sessions[ self::SESSION_ID ]['status'] = $status;
+        $before                                           = $this->db->sessions[ self::SESSION_ID ];
+
+        $response = $this->update( array( 'buyer' => array( 'email' => 'late@example.test' ) ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( $before, $this->db->sessions[ self::SESSION_ID ] );
+    }
+
+    #[DataProvider( 'settling_and_closed_session_statuses' )]
+    public function test_update_buyer_is_refused_on_a_session_that_is_not_incomplete( string $status ): void {
+        $this->db->sessions[ self::SESSION_ID ]['status'] = $status;
+        $before                                           = $this->db->sessions[ self::SESSION_ID ];
+
+        $response = $this->put_buyer( array( 'email' => 'late@example.test' ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_' . $status, $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( $before, $this->db->sessions[ self::SESSION_ID ] );
+    }
+
+    public function test_update_buyer_changes_an_incomplete_session(): void {
+        $response = $this->put_buyer( array( 'email' => 'new@example.test' ) );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'new@example.test', json_decode( $this->db->sessions[ self::SESSION_ID ]['buyer'], true )['email'] );
+    }
+
+    public function test_update_buyer_is_refused_while_the_session_is_locked(): void {
+        $this->db->held = array( self::lock_name() );
+        $before         = $this->db->sessions[ self::SESSION_ID ];
+
+        $response = $this->put_buyer( array( 'email' => 'late@example.test' ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_busy', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( $before, $this->db->sessions[ self::SESSION_ID ] );
+    }
+
+    public function test_session_past_its_expiry_is_not_mutable_before_it_is_marked_expired(): void {
+        $this->db->sessions[ self::SESSION_ID ]['expires_at'] = gmdate( 'Y-m-d H:i:s', time() - 60 );
+        $before                                               = $this->db->sessions[ self::SESSION_ID ];
+
+        $response = $this->put_buyer( array( 'email' => 'late@example.test' ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_expired', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->db->updates );
+        $this->assertSame( $before, $this->db->sessions[ self::SESSION_ID ] );
+    }
+
+    public function test_session_with_an_unknown_status_is_not_mutable(): void {
+        $this->db->sessions[ self::SESSION_ID ]['status'] = 'something_new';
+
+        $this->assertSame( 409, $this->put_buyer( array( 'email' => 'late@example.test' ) )->get_status() );
+        $this->assertSame( 409, $this->update( array( 'buyer' => array( 'email' => 'late@example.test' ) ) )->get_status() );
+        $this->assertSame( array(), $this->db->updates );
+    }
+
+    public static function settling_and_closed_session_statuses(): array {
+        return array(
+            'canceled'             => array( 'canceled' ),
+            'completed'            => array( 'completed' ),
+            'complete_in_progress' => array( 'complete_in_progress' ),
+            'requires_escalation'  => array( 'requires_escalation' ),
+            'expired'              => array( 'expired' ),
+        );
+    }
+
+    private function put_buyer( array $body ): WP_REST_Response {
+        self::as_platform( self::PLATFORM );
+        return ( new FD_UCP_Buyer_Identity_Controller() )->update_buyer( new WP_REST_Request(
+            '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/buyer',
+            array( 'UCP-Agent' => '' ),
+            array( 'id' => self::SESSION_ID ),
+            $body
+        ) );
+    }
+
     public function test_promotion_is_refused_while_the_session_is_locked(): void {
         FD_Test_Coupon_Store::add( 'SAVE10', 'percent', 10 );
         $this->db->held = array( self::lock_name() );

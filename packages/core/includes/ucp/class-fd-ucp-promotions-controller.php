@@ -42,7 +42,6 @@ class FD_UCP_Promotions_Controller {
 			'code'          => $coupon->get_code(),
 			'discount_type' => $coupon->get_discount_type(),
 			'amount'        => $coupon->get_amount(),
-			'description'   => $coupon->get_description(),
 			'valid'         => $valid,
 		);
 
