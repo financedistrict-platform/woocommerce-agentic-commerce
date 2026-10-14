@@ -42,6 +42,43 @@ final class AgentProfileFetcherTest extends TestCase {
         $this->assertTrue( $this->fetcher( array() )->lookup( 'http://127.0.0.1/p' )['failed'] );
     }
 
+    public static function non_public_addresses(): array {
+        return array(
+            'carrier-grade NAT start'   => array( '100.64.0.0' ),
+            'carrier-grade NAT'         => array( '100.64.0.1' ),
+            'carrier-grade NAT end'     => array( '100.127.255.255' ),
+            'IETF protocol assignments' => array( '192.0.0.8' ),
+            'TEST-NET-1'                => array( '192.0.2.1' ),
+            'benchmarking'              => array( '198.18.0.1' ),
+            'benchmarking end'          => array( '198.19.255.255' ),
+            'TEST-NET-2'                => array( '198.51.100.7' ),
+            'TEST-NET-3'                => array( '203.0.113.9' ),
+            'multicast'                 => array( '224.0.0.1' ),
+        );
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider( 'non_public_addresses' )]
+    public function test_non_public_special_use_addresses_are_rejected_without_a_request( string $ip ): void {
+        $this->assertTrue( $this->fetcher( array( $ip ) )->lookup( 'https://agent.example/p' )['failed'], $ip );
+        $this->assertSame( array(), FD_Test_WP::$requests, $ip );
+    }
+
+    public static function addresses_beside_the_special_use_ranges(): array {
+        return array(
+            'just below carrier-grade NAT' => array( '100.63.255.255' ),
+            'just above carrier-grade NAT' => array( '100.128.0.0' ),
+            'just below benchmarking'      => array( '198.17.255.255' ),
+            'just above benchmarking'      => array( '198.20.0.0' ),
+        );
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider( 'addresses_beside_the_special_use_ranges' )]
+    public function test_public_addresses_next_to_the_special_use_ranges_are_fetched( string $ip ): void {
+        $this->respond( json_encode( array( 'ucp' => array( 'version' => '2026-08-25' ) ) ) );
+
+        $this->assertSame( '2026-08-25', $this->fetcher( array( $ip ) )->lookup( 'https://agent.example/p' )['version'], $ip );
+    }
+
     public function test_any_private_address_among_several_rejects_the_host(): void {
         $this->assertTrue( $this->fetcher( array( '93.184.216.34', '10.0.0.5' ) )->lookup( 'https://agent.example/p' )['failed'] );
     }
