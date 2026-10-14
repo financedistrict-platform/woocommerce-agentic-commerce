@@ -105,7 +105,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $this->assertSame( FD_UCP_Version_Registry::LATEST, $response->get_data()['ucp']['version'] );
     }
 
-    public function test_throwing_handler_releases_the_session(): void {
+    public function test_throwing_handler_keeps_the_session_awaiting_confirmation(): void {
         $registry = new FD_Payment_Registry();
         $registry->register( new class() extends FD_Prism_Handler {
             public function __construct() {
@@ -124,8 +124,8 @@ final class BackCompatOriginalAgentTest extends TestCase {
             array( 'payment' => array( 'instruments' => array( array( 'handler_id' => 'x402', 'credential' => array( 'a' => 1 ) ) ) ) )
         ) );
 
-        $this->assertSame( 422, $response->get_status() );
-        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $this->assertSame( 202, $response->get_status() );
+        $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
     }
 
     public function test_unknown_handler_is_rejected_before_settle(): void {

@@ -52,6 +52,15 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
             }
         }
 
+        if ( 'payment_pending' === ( $session['status'] ?? null ) ) {
+            $response['messages'][] = array(
+                'type'     => 'error',
+                'code'     => 'payment_pending',
+                'content'  => 'Payment outcome is not confirmed yet. Call complete again with the same payment credential',
+                'severity' => 'recoverable',
+            );
+        }
+
         if ( $buyer ) {
             $response['buyer'] = $buyer;
         }

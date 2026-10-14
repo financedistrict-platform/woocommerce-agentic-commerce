@@ -12,7 +12,7 @@ class FD_Prism_Validator {
     private const SCHEME               = 'exact';
     private const NETWORK_PREFIX       = 'eip155:';
 
-    public static function verify( $credential, $stored_config ): array|WP_Error {
+    public static function verify( $credential, $stored_config, bool $resuming = false ): array|WP_Error {
         $quote = self::parse_quote( $stored_config );
         if ( ! $quote ) {
             return new WP_Error( 'missing_payment_requirements', 'No stored payment requirements to validate against' );
@@ -60,7 +60,7 @@ class FD_Prism_Validator {
         if ( (int) $authorization['validAfter'] > $now + self::CLOCK_SKEW_SECONDS ) {
             return new WP_Error( 'authorization_not_yet_valid', 'Signed payment is not valid yet' );
         }
-        if ( (int) $authorization['validBefore'] <= $now ) {
+        if ( ! $resuming && (int) $authorization['validBefore'] <= $now ) {
             return new WP_Error( 'authorization_expired', 'Signed payment has expired' );
         }
 

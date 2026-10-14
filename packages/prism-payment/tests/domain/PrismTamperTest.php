@@ -77,12 +77,12 @@ final class PrismTamperTest extends TestCase {
         );
     }
 
-    private function settle( $credential, string $checkout_id = 'c1' ): array {
+    private function settle( $credential, string $checkout_id = 'c1', array $extra = array() ): array {
         return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
             'checkout_id'   => $checkout_id,
             'credential'    => $credential,
             'checkout_meta' => self::quoted_meta(),
-        ) );
+        ) + $extra );
     }
 
     private static function quoted_meta(): array {
@@ -689,5 +689,200 @@ final class PrismTamperTest extends TestCase {
         $result = $this->settle( self::credential() );
 
         $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unknown_outcomes(): array {
+        $pending = json_encode( array( 'success' => false, 'errorReason' => 'settlement_pending', 'transaction' => '' ) );
+        return array(
+            'transport error'       => array( new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' ) ),
+            'http 500'              => array( array( 'response' => array( 'code' => 500 ), 'body' => '' ) ),
+            'http 502'              => array( array( 'response' => array( 'code' => 502 ), 'body' => '<html>Bad Gateway</html>' ) ),
+            'http 504'              => array( array( 'response' => array( 'code' => 504 ), 'body' => '' ) ),
+            'http 408'              => array( array( 'response' => array( 'code' => 408 ), 'body' => '' ) ),
+            'http 429'              => array( array( 'response' => array( 'code' => 429 ), 'body' => '' ) ),
+            'unparseable success'   => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ) ),
+            'empty success body'    => array( array( 'response' => array( 'code' => 200 ), 'body' => '' ) ),
+            'settlement pending'    => array( array( 'response' => array( 'code' => 200 ), 'body' => $pending ) ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ) ),
+            'receipt timeout'       => array( self::gateway_answer( 'receipt_timeout' ) ),
+            'transaction reverted'  => array( self::gateway_answer( 'transaction_reverted' ) ),
+            'execution failed'      => array( self::gateway_answer( 'execution_failed: Transaction would revert: execution reverted: FiatTokenV2: authorization is used or canceled' ) ),
+            'execution cancelled'   => array( self::gateway_answer( 'execution_cancelled' ) ),
+            'settlement failed'     => array( self::gateway_answer( 'settlement_failed' ) ),
+            'facilitator failed'    => array( self::gateway_answer( 'facilitator_settlement_failed' ) ),
+            'unlisted reason'       => array( self::gateway_answer( 'some_future_reason' ) ),
+            'reason is not a string' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => array( 'x' ), 'transaction' => '' ) ) ) ),
+            'no reason at all'      => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'transaction' => '' ) ) ) ),
+        );
+    }
+
+    private static function gateway_answer( string $reason ): array {
+        return array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => $reason, 'transaction' => '' ) ),
+        );
+    }
+
+    #[DataProvider( 'unknown_outcomes' )]
+    public function test_unknown_settlement_outcome_is_pending_not_rejected( $response ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+        $this->assertArrayNotHasKey( 'review', $result );
+    }
+
+    public static function answered_outcomes(): array {
+        return array(
+            'transport error'         => array( new WP_Error( 'http_request_failed', 'cURL error 28' ), false, 'no response' ),
+            'http 502'                => array( array( 'response' => array( 'code' => 502 ), 'body' => '' ), false, 'HTTP 502' ),
+            'unparseable success'     => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ), false, 'unreadable response' ),
+            'settlement pending'      => array( self::gateway_answer( 'settlement_pending' ), false, 'settlement_pending' ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ), false, 'unexpected_settle_error' ),
+            'no reason at all'        => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false ) ) ), false, 'no reason given' ),
+            'receipt timeout'         => array( self::gateway_answer( 'receipt_timeout' ), true, 'receipt_timeout' ),
+            'transaction reverted'    => array( self::gateway_answer( 'transaction_reverted' ), true, 'transaction_reverted' ),
+            'used nonce'              => array( self::gateway_answer( 'execution_failed: authorization is used or canceled' ), true, 'execution_failed: authorization is used or canceled' ),
+            'unlisted reason'         => array( self::gateway_answer( 'some_future_reason' ), true, 'some_future_reason' ),
+        );
+    }
+
+    #[DataProvider( 'answered_outcomes' )]
+    public function test_unconfirmed_outcome_reports_whether_the_gateway_answered_and_why( $response, bool $answered, string $reason ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+        $this->assertSame( $answered, $result['answered'] );
+        $this->assertSame( $reason, $result['reason'] );
+    }
+
+    public function test_unconfirmed_reason_is_printable_and_bounded(): void {
+        $GLOBALS['fd_test_http_response'] = self::gateway_answer( "execution_failed: \x00\n" . str_repeat( 'x', 500 ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertMatchesRegularExpression( '/^[\x20-\x7E]{1,200}$/', $result['reason'] );
+    }
+
+    public static function review_outcomes(): array {
+        return array(
+            'authorization consumed' => array( 'authorization_consumed' ),
+            'settlement unresolved'  => array( 'settlement_unresolved' ),
+        );
+    }
+
+    #[DataProvider( 'review_outcomes' )]
+    public function test_consumed_or_unresolved_authorization_needs_review( string $reason ): void {
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => $reason, 'transaction' => '' ) ),
+        );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+        $this->assertArrayNotHasKey( 'pending', $result );
+    }
+
+    public static function definite_rejections(): array {
+        return array(
+            'http 400 with body'  => array( array( 'response' => array( 'code' => 400 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => 'invalid_signature' ) ) ) ),
+            'http 401'            => array( array( 'response' => array( 'code' => 401 ), 'body' => '' ) ),
+            'http 422'            => array( array( 'response' => array( 'code' => 422 ), 'body' => '{}' ) ),
+            'declined by gateway' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => 'insufficient_funds', 'transaction' => '' ) ) ) ),
+            'unsupported network' => array( self::gateway_answer( 'unsupported_network' ) ),
+            'unsupported token'   => array( self::gateway_answer( 'unsupported_token' ) ),
+            'sanctions hit'       => array( self::gateway_answer( 'sanctions_hit' ) ),
+            'point of service'    => array( self::gateway_answer( 'point_of_service_not_found' ) ),
+            'authorization expired' => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_expired' ) ),
+            'bad signature'       => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_signature' ) ),
+            'unknown token'       => array( self::gateway_answer( 'unknown_token: 0x1111111111111111111111111111111111111111 on chain 1' ) ),
+            'authorization mismatch' => array( self::gateway_answer( 'authorization_mismatch' ) ),
+        );
+    }
+
+    #[DataProvider( 'definite_rejections' )]
+    public function test_definite_rejection_is_neither_pending_nor_review( array $response ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertArrayNotHasKey( 'pending', $result );
+        $this->assertArrayNotHasKey( 'review', $result );
+    }
+
+    public function test_pending_settlement_can_be_retried_with_the_same_credential(): void {
+        $credential                       = self::credential();
+        $GLOBALS['fd_test_http_response'] = new WP_Error( 'http_request_failed', 'timed out' );
+
+        $first = $this->settle( $credential );
+
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK ) ),
+        );
+        $second = $this->settle( $credential );
+
+        $this->assertTrue( $first['pending'] ?? false );
+        $this->assertTrue( $second['success'] );
+        $this->assertSame( '0xabc', $second['transaction_reference'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_settle_request_outlasts_the_gateway_facilitator_timeout(): void {
+        $this->settle( self::credential() );
+
+        $this->assertSame( 45, $GLOBALS['fd_test_requests'][0]['args']['timeout'] );
+    }
+
+    public function test_resumed_settlement_asks_the_gateway_about_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => 'settlement_unresolved', 'transaction' => '' ) ),
+        );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+        $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+    }
+
+    public function test_resumed_settlement_completes_when_the_gateway_confirms_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertTrue( $result['success'], json_encode( $result ) );
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+    }
+
+    public function test_first_settlement_still_refuses_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential, 'c1', array( 'resume' => false ) ) );
+    }
+
+    public function test_resumed_settlement_keeps_every_other_check(): void {
+        $future = self::credential();
+        $future['paymentPayload']['payload']['authorization']['validAfter'] = (string) ( time() + 3600 );
+        $this->assertRejectedBeforeSettle( $this->settle( $future, 'c1', array( 'resume' => true ) ) );
+
+        $amount = self::credential();
+        $amount['paymentPayload']['payload']['authorization']['value'] = '1';
+        $this->assertRejectedBeforeSettle( $this->settle( $amount, 'c1', array( 'resume' => true ) ) );
+
+        $recipient = self::credential();
+        $recipient['paymentPayload']['payload']['authorization']['to'] = '0x2222222222222222222222222222222222222222';
+        $this->assertRejectedBeforeSettle( $this->settle( $recipient, 'c1', array( 'resume' => true ) ) );
     }
 }
