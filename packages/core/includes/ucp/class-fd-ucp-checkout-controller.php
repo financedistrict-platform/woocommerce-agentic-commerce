@@ -546,11 +546,15 @@ class FD_UCP_Checkout_Controller {
             $result = $this->registry->settle( $handler_id, $settle_input );
         } catch ( Throwable $e ) {
             error_log( 'fd-ucp: settlement raised ' . get_class( $e ) . ': ' . $e->getMessage() );
-            $result = array( 'success' => false, 'pending' => true );
+            $result = array( 'success' => false, 'pending' => true, 'reason' => 'internal error during settlement' );
         }
 
         if ( ! empty( $result['pending'] ) ) {
-            return $this->hold_pending( $order, $session );
+            $reason = (string) ( $result['reason'] ?? 'unknown' );
+            if ( $resuming && ! empty( $result['answered'] ) ) {
+                return $this->hold_for_review( $order, $session, "Settlement is still unconfirmed on retry: $reason" );
+            }
+            return $this->hold_pending( $order, $session, $reason );
         }
 
         if ( ! empty( $result['review'] ) ) {
@@ -597,7 +601,12 @@ class FD_UCP_Checkout_Controller {
         );
     }
 
-    private function hold_pending( WC_Order $order, array $session ): WP_REST_Response {
+    private function hold_pending( WC_Order $order, array $session, string $reason ): WP_REST_Response {
+        $order->add_order_note( sprintf(
+            'Payment outcome unknown (%s), held at %s UTC. Only the same signed payment may be retried; update and cancel are refused.',
+            $reason,
+            gmdate( 'Y-m-d H:i:s' )
+        ) );
         $this->update_session_row( $session['id'], array(
             'status'      => 'payment_pending',
             'wc_order_id' => $order->get_id(),

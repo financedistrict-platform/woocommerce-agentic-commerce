@@ -670,6 +670,7 @@ class WC_Order {
     public string $order_key = 'wc_order_Zk3q9XvT1aBcD';
     public array $meta   = array();
     public array $calls  = array();
+    public array $notes  = array();
     public array $items  = array();
     public string $total = '0.00';
     public string $status = 'pending';
@@ -816,6 +817,12 @@ class WC_Order {
 
     public function needs_payment(): bool {
         return in_array( $this->status, array( 'pending', 'failed' ), true );
+    }
+
+    public function add_order_note( string $note ): int {
+        $this->calls[] = 'add_order_note';
+        $this->notes[] = $note;
+        return count( $this->notes );
     }
 
     public function update_status( string $status, string $note = '' ): bool {

@@ -703,6 +703,23 @@ final class PrismTamperTest extends TestCase {
             'unparseable success'   => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ) ),
             'empty success body'    => array( array( 'response' => array( 'code' => 200 ), 'body' => '' ) ),
             'settlement pending'    => array( array( 'response' => array( 'code' => 200 ), 'body' => $pending ) ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ) ),
+            'receipt timeout'       => array( self::gateway_answer( 'receipt_timeout' ) ),
+            'transaction reverted'  => array( self::gateway_answer( 'transaction_reverted' ) ),
+            'execution failed'      => array( self::gateway_answer( 'execution_failed: Transaction would revert: execution reverted: FiatTokenV2: authorization is used or canceled' ) ),
+            'execution cancelled'   => array( self::gateway_answer( 'execution_cancelled' ) ),
+            'settlement failed'     => array( self::gateway_answer( 'settlement_failed' ) ),
+            'facilitator failed'    => array( self::gateway_answer( 'facilitator_settlement_failed' ) ),
+            'unlisted reason'       => array( self::gateway_answer( 'some_future_reason' ) ),
+            'reason is not a string' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => array( 'x' ), 'transaction' => '' ) ) ) ),
+            'no reason at all'      => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'transaction' => '' ) ) ) ),
+        );
+    }
+
+    private static function gateway_answer( string $reason ): array {
+        return array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => $reason, 'transaction' => '' ) ),
         );
     }
 
@@ -715,6 +732,40 @@ final class PrismTamperTest extends TestCase {
         $this->assertFalse( $result['success'] );
         $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
         $this->assertArrayNotHasKey( 'review', $result );
+    }
+
+    public static function answered_outcomes(): array {
+        return array(
+            'transport error'         => array( new WP_Error( 'http_request_failed', 'cURL error 28' ), false, 'no response' ),
+            'http 502'                => array( array( 'response' => array( 'code' => 502 ), 'body' => '' ), false, 'HTTP 502' ),
+            'unparseable success'     => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ), false, 'unreadable response' ),
+            'settlement pending'      => array( self::gateway_answer( 'settlement_pending' ), false, 'settlement_pending' ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ), false, 'unexpected_settle_error' ),
+            'no reason at all'        => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false ) ) ), false, 'no reason given' ),
+            'receipt timeout'         => array( self::gateway_answer( 'receipt_timeout' ), true, 'receipt_timeout' ),
+            'transaction reverted'    => array( self::gateway_answer( 'transaction_reverted' ), true, 'transaction_reverted' ),
+            'used nonce'              => array( self::gateway_answer( 'execution_failed: authorization is used or canceled' ), true, 'execution_failed: authorization is used or canceled' ),
+            'unlisted reason'         => array( self::gateway_answer( 'some_future_reason' ), true, 'some_future_reason' ),
+        );
+    }
+
+    #[DataProvider( 'answered_outcomes' )]
+    public function test_unconfirmed_outcome_reports_whether_the_gateway_answered_and_why( $response, bool $answered, string $reason ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+        $this->assertSame( $answered, $result['answered'] );
+        $this->assertSame( $reason, $result['reason'] );
+    }
+
+    public function test_unconfirmed_reason_is_printable_and_bounded(): void {
+        $GLOBALS['fd_test_http_response'] = self::gateway_answer( "execution_failed: \x00\n" . str_repeat( 'x', 500 ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertMatchesRegularExpression( '/^[\x20-\x7E]{1,200}$/', $result['reason'] );
     }
 
     public static function review_outcomes(): array {
@@ -744,6 +795,14 @@ final class PrismTamperTest extends TestCase {
             'http 401'            => array( array( 'response' => array( 'code' => 401 ), 'body' => '' ) ),
             'http 422'            => array( array( 'response' => array( 'code' => 422 ), 'body' => '{}' ) ),
             'declined by gateway' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => 'insufficient_funds', 'transaction' => '' ) ) ) ),
+            'unsupported network' => array( self::gateway_answer( 'unsupported_network' ) ),
+            'unsupported token'   => array( self::gateway_answer( 'unsupported_token' ) ),
+            'sanctions hit'       => array( self::gateway_answer( 'sanctions_hit' ) ),
+            'point of service'    => array( self::gateway_answer( 'point_of_service_not_found' ) ),
+            'authorization expired' => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_expired' ) ),
+            'bad signature'       => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_signature' ) ),
+            'unknown token'       => array( self::gateway_answer( 'unknown_token: 0x1111111111111111111111111111111111111111 on chain 1' ) ),
+            'authorization mismatch' => array( self::gateway_answer( 'authorization_mismatch' ) ),
         );
     }
 

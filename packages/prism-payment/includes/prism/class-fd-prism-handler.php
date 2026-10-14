@@ -9,8 +9,44 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
     private const STALE_PREFIX      = '_fd_prism_discovery_stale_';
     private const CACHE_TTL         = 300;
     private const INSTRUMENT_TYPES  = array( 'x402', 'tokenized', 'default' );
-    private const PENDING_REASON    = 'settlement_pending';
     private const REVIEW_REASONS    = array( 'authorization_consumed', 'settlement_unresolved' );
+    private const UNANSWERED_REASONS = array( 'settlement_pending', 'unexpected_settle_error' );
+    private const REASON_NOTE_LENGTH = 200;
+    private const PRE_BROADCAST_REASONS = array(
+        'authorization_mismatch',
+        'unsupported_network',
+        'unsupported_token',
+        'sanctions_hit',
+        'risk_threshold_exceeded',
+        'point_of_service_not_found',
+        'seller_wallet_not_configured',
+        'affiliate_residual_overflow',
+        'affiliate_settlement_unavailable',
+        'cashback_outside_campaign_bounds',
+        'invalid_payment_accepted_mismatch',
+        'network_not_found',
+        'invalid_signature',
+        'invalid_exact_evm_payload_recipient_mismatch',
+        'invalid_exact_evm_payload_authorization_value',
+        'invalid_exact_evm_payload_authorization_time_bounds',
+        'invalid_exact_evm_payload_authorization_not_yet_valid',
+        'invalid_exact_evm_payload_authorization_expired',
+        'invalid_exact_evm_payload_authorization_missing_signature',
+        'invalid_exact_evm_payload_authorization_signature',
+        'invalid_amount_format',
+        'invalid_amount_zero_or_negative',
+        'invalid_amount_below_required',
+        'invalid_amount_exceeds_maximum',
+        'invalid_timestamp_format',
+        'invalid_timestamp_order',
+        'insufficient_funds',
+        'balance_check_failed',
+        'balance_verification_failed',
+        'unauthorized',
+        'invalid_authorization_recipient',
+        'invalid_authorization_format',
+    );
+    private const PRE_BROADCAST_PREFIXES = array( 'unknown_network:', 'unknown_token:', 'missing_variant_config:' );
 
     private FD_Prism_Client $client;
     private string $api_url;
@@ -222,12 +258,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             $verified['payment_payload'],
             $verified['payment_requirements']
         );
-        if ( $this->is_unconfirmed( $response ) ) {
-            return array(
-                'success' => false,
-                'pending' => true,
-                'error'   => 'Settlement outcome is not confirmed yet',
-            );
+        $no_answer = $this->no_answer_reason( $response );
+        if ( null !== $no_answer ) {
+            return self::pending_result( $no_answer, false );
         }
 
         $result = $response['body'];
@@ -241,16 +274,23 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         $success = $result['success'] ?? null;
         $tx_ref  = $this->transaction_reference( $result );
         if ( true !== $success && ( false === $success || '' === $tx_ref ) ) {
-            $reason = $result['error'] ?? $result['errorReason'] ?? $result['reason'] ?? null;
-            if ( $response['status'] < 300 && in_array( $reason, self::REVIEW_REASONS, true ) ) {
-                $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'needs review' );
+            $reason      = $result['error'] ?? $result['errorReason'] ?? $result['reason'] ?? null;
+            $code        = is_string( $reason ) ? trim( $reason ) : '';
+            $checkout_id = (string) ( $input['checkout_id'] ?? '' );
+            if ( $response['status'] < 300 && in_array( $code, self::REVIEW_REASONS, true ) ) {
+                $this->log_settlement_response( $result, $checkout_id, 'needs review' );
                 return array(
                     'success' => false,
                     'review'  => true,
-                    'error'   => "Prism settlement needs review: $reason",
+                    'error'   => "Prism settlement needs review: $code",
                 );
             }
-            $this->log_settlement_response( $result, (string) ( $input['checkout_id'] ?? '' ), 'rejected' );
+            if ( $response['status'] < 300 && ! self::is_pre_broadcast_reason( $code ) ) {
+                $this->log_settlement_response( $result, $checkout_id, 'unconfirmed' );
+                $answered = '' !== $code && ! in_array( $code, self::UNANSWERED_REASONS, true );
+                return self::pending_result( '' !== $code ? $code : 'no reason given', $answered );
+            }
+            $this->log_settlement_response( $result, $checkout_id, 'rejected' );
             return array(
                 'success' => false,
                 'error'   => is_string( $reason ) && '' !== $reason ? $reason : 'Settlement failed',
@@ -286,16 +326,41 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         return $settlement;
     }
 
-    private function is_unconfirmed( array $response ): bool {
+    private function no_answer_reason( array $response ): ?string {
         $status = $response['status'];
         if ( $status >= 400 && $status < 500 && ! in_array( $status, array( 408, 429 ), true ) ) {
-            return false;
+            return null;
+        }
+        if ( 0 === $status ) {
+            return 'no response';
         }
         if ( $status < 200 || $status >= 300 ) {
-            return true;
+            return "HTTP $status";
         }
         $body = $response['body'];
-        return ! is_array( $body ) || array() === $body || self::PENDING_REASON === ( $body['errorReason'] ?? null );
+        return ! is_array( $body ) || array() === $body ? 'unreadable response' : null;
+    }
+
+    private static function is_pre_broadcast_reason( string $code ): bool {
+        if ( in_array( $code, self::PRE_BROADCAST_REASONS, true ) ) {
+            return true;
+        }
+        foreach ( self::PRE_BROADCAST_PREFIXES as $prefix ) {
+            if ( str_starts_with( $code, $prefix ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function pending_result( string $reason, bool $answered ): array {
+        return array(
+            'success'  => false,
+            'pending'  => true,
+            'answered' => $answered,
+            'reason'   => substr( (string) preg_replace( '/[^\x20-\x7E]/', '', $reason ), 0, self::REASON_NOTE_LENGTH ),
+            'error'    => 'Settlement outcome is not confirmed yet',
+        );
     }
 
     private function transaction_reference( array $result ): string {

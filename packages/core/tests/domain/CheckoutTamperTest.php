@@ -1870,6 +1870,28 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertNotContains( 'update_status', $this->order()->calls );
     }
 
+    public function test_held_pending_session_leaves_an_order_note_with_reason_and_time(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'answered' => true, 'reason' => 'receipt_timeout', 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertCount( 1, $this->order()->notes );
+        $this->assertStringContainsString( 'receipt_timeout', $this->order()->notes[0] );
+        $this->assertMatchesRegularExpression( '/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/', $this->order()->notes[0] );
+        $this->assertSame( 'pending', $this->order()->get_status() );
+    }
+
+    public function test_answered_unconfirmed_outcome_on_the_first_attempt_stays_pending(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'answered' => true, 'reason' => 'transaction_reverted', 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
     public function test_settlement_exception_is_an_unconfirmed_outcome(): void {
         $this->quoted_session( 4695, 4695, self::untaxed_totals() );
         $this->handler->throw = new RuntimeException( 'connection reset' );
@@ -1997,6 +2019,27 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_pending_retry_with_an_answered_unknown_reason_goes_to_review_not_back_to_pending(): void {
+        $this->pending_session();
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'answered' => true, 'reason' => 'execution_failed: authorization is used or canceled', 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertHeld( $response );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_pending_retry_without_a_gateway_answer_stays_pending(): void {
+        $this->pending_session();
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'answered' => false, 'reason' => 'HTTP 502', 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $this->assertSame( 'pending', $this->order()->get_status() );
     }
 
     private function interrupted_session( int $age_seconds ): void {
