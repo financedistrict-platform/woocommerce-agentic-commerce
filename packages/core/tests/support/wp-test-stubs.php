@@ -469,7 +469,7 @@ class WC_Coupon {
     }
 
     public function get_description(): string {
-        return '';
+        return $this->data['description'] ?? '';
     }
 }
 
