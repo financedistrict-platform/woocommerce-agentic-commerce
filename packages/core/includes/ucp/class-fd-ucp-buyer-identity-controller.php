@@ -34,9 +34,22 @@ class FD_UCP_Buyer_Identity_Controller {
 	}
 
 	public function update_buyer( WP_REST_Request $request ): WP_REST_Response {
+		return FD_UCP_Session_Lock::run(
+			(string) $request->get_param( 'id' ),
+			'session_busy',
+			'Checkout session is being changed by another request',
+			fn() => $this->do_update_buyer( $request )
+		);
+	}
+
+	private function do_update_buyer( WP_REST_Request $request ): WP_REST_Response {
 		$session = $this->load_session( $request );
 		if ( $session instanceof WP_REST_Response ) {
 			return $session;
+		}
+
+		if ( ! FD_UCP_Status::is_mutable( $session ) ) {
+			return FD_UCP_Error::session_closed( $session );
 		}
 
 		$existing = json_decode( $session['buyer'] ?? '{}', true ) ?: array();

@@ -3,8 +3,7 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Checkout_Controller {
 
-    private const NAMESPACE       = 'fd-ucp/v1';
-    private const FROZEN_STATUSES = array( 'canceled', 'completed', 'requires_escalation', 'expired' );
+    private const NAMESPACE = 'fd-ucp/v1';
     private FD_Payment_Registry $registry;
     private FD_Rate_Limiter $rate_limiter;
 
@@ -196,7 +195,7 @@ class FD_UCP_Checkout_Controller {
     // =========================================================================
 
     public function update_session( WP_REST_Request $request ): WP_REST_Response {
-        return $this->with_session_lock(
+        return FD_UCP_Session_Lock::run(
             (string) $request->get_param( 'id' ),
             'session_busy',
             'Checkout session is being changed by another request',
@@ -275,7 +274,7 @@ class FD_UCP_Checkout_Controller {
     }
 
     public function apply_promotion( WP_REST_Request $request, string $code ): WP_REST_Response {
-        return $this->with_session_lock(
+        return FD_UCP_Session_Lock::run(
             (string) $request->get_param( 'id' ),
             'session_busy',
             'Checkout session is being changed by another request',
@@ -337,8 +336,8 @@ class FD_UCP_Checkout_Controller {
             return $session;
         }
 
-        if ( in_array( $session['status'], self::FROZEN_STATUSES, true ) ) {
-            return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
+        if ( ! FD_UCP_Status::is_mutable( $session ) ) {
+            return FD_UCP_Error::session_closed( $session );
         }
 
         return $session;
@@ -400,29 +399,12 @@ class FD_UCP_Checkout_Controller {
 
         $session_id = (string) $request->get_param( 'id' );
 
-        return $this->with_session_lock(
+        return FD_UCP_Session_Lock::run(
             $session_id,
             'settlement_in_progress',
             'Another settlement attempt is in progress',
             fn() => $this->do_complete_session( $request, $session_id )
         );
-    }
-
-    private function with_session_lock( string $session_id, string $busy_code, string $busy_message, callable $fn ): WP_REST_Response {
-        global $wpdb;
-        $lock_name = 'fd_ucp_session_' . md5( $session_id );
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-        $got_lock = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 2)', $lock_name ) );
-        if ( '1' !== (string) $got_lock ) {
-            return FD_UCP_Error::response( $busy_code, $busy_message, 409 );
-        }
-
-        try {
-            return $fn();
-        } finally {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-            $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
-        }
     }
 
     private function do_complete_session( WP_REST_Request $request, string $session_id ): WP_REST_Response {
@@ -431,8 +413,8 @@ class FD_UCP_Checkout_Controller {
             return $session;
         }
 
-        if ( in_array( $session['status'], array( 'canceled', 'completed', 'complete_in_progress', 'requires_escalation', 'expired' ), true ) ) {
-            return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
+        if ( ! FD_UCP_Status::is_mutable( $session ) ) {
+            return FD_UCP_Error::session_closed( $session );
         }
 
         // Guard against settling when the WC order has been cancelled by an admin
