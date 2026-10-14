@@ -44,6 +44,8 @@ final class CheckoutTamperTest extends TestCase {
             public array $settled  = array();
             public array $result   = array();
             public array $credentials = array();
+            public array $inputs      = array();
+            public ?Closure $during   = null;
             public ?Throwable $throw = null;
 
             public function __construct() {
@@ -62,6 +64,10 @@ final class CheckoutTamperTest extends TestCase {
             public function settle_payment( array $input ): array {
                 $this->settled[]     = $input['checkout_meta'][ $this->id() ]['prepared_amount'] ?? null;
                 $this->credentials[] = $input['credential'];
+                $this->inputs[]      = $input;
+                if ( null !== $this->during ) {
+                    ( $this->during )();
+                }
                 if ( null !== $this->throw ) {
                     throw $this->throw;
                 }
@@ -1895,6 +1901,91 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->assertHeld( $response );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    private function interrupted_session( int $age_seconds ): void {
+        $this->pending_session();
+        $this->db->sessions[ self::SESSION_ID ]['status']     = 'complete_in_progress';
+        $this->db->sessions[ self::SESSION_ID ]['updated_at'] = gmdate( 'Y-m-d H:i:s', time() - $age_seconds );
+    }
+
+    public function test_resume_tells_the_handler_to_skip_only_the_expiry_check(): void {
+        $this->pending_session();
+        $this->handler->inputs = array();
+        $this->handler->result = $this->settled_result();
+
+        $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertTrue( $this->handler->inputs[0]['resume'] ?? false );
+    }
+
+    public function test_first_attempt_does_not_ask_the_handler_to_resume(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+
+        $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertFalse( $this->handler->inputs[0]['resume'] ?? false );
+    }
+
+    public function test_pending_retry_that_fails_without_a_pending_flag_goes_to_review_not_incomplete(): void {
+        $this->pending_session();
+        $this->handler->result = array( 'success' => false, 'error' => 'Signed payment has expired' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertHeld( $response );
+        $this->assertNotSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+    }
+
+    public function test_credential_fingerprint_is_stored_before_the_settle_call(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $seen = array();
+        $this->handler->during = function () use ( &$seen ): void {
+            $seen = array(
+                'status'      => $this->db->sessions[ self::SESSION_ID ]['status'],
+                'fingerprint' => $this->order()->get_meta( '_fd_ucp_pending_credential' ),
+            );
+        };
+
+        $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 'complete_in_progress', $seen['status'] );
+        $this->assertMatchesRegularExpression( '/^[0-9a-f]{64}$/', $seen['fingerprint'] );
+    }
+
+    public function test_session_interrupted_mid_settle_resumes_with_the_same_credential(): void {
+        $this->interrupted_session( 300 );
+        $this->handler->inputs = array();
+        $this->handler->result = $this->settled_result();
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_B );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'completed', $response->get_data()['status'] );
+        $this->assertTrue( $this->handler->inputs[0]['resume'] ?? false );
+    }
+
+    public function test_session_interrupted_mid_settle_refuses_a_different_credential(): void {
+        $this->interrupted_session( 300 );
+        $this->handler->result = $this->settled_result();
+
+        $response = $this->complete( self::PLATFORM, array( 'payload' => 'signed', 'nonce' => '0xcc' ) );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'payment_pending_mismatch', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_session_still_inside_the_settle_window_stays_blocked(): void {
+        $this->interrupted_session( 5 );
+        $this->handler->result = $this->settled_result();
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'session_complete_in_progress', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $this->handler->settled );
     }
 
     private static function one_item(): array {

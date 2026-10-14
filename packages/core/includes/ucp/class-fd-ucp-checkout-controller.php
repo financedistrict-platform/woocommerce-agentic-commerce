@@ -6,6 +6,7 @@ class FD_UCP_Checkout_Controller {
     private const NAMESPACE       = 'fd-ucp/v1';
     private const FROZEN_STATUSES = array( 'canceled', 'completed', 'requires_escalation', 'expired', 'payment_pending' );
     private const PENDING_CREDENTIAL_META = '_fd_ucp_pending_credential';
+    private const SETTLE_WINDOW_SECONDS   = 60;
     private FD_Payment_Registry $registry;
     private FD_Rate_Limiter $rate_limiter;
 
@@ -432,7 +433,8 @@ class FD_UCP_Checkout_Controller {
             return $session;
         }
 
-        if ( in_array( $session['status'], array( 'canceled', 'completed', 'complete_in_progress', 'requires_escalation', 'expired' ), true ) ) {
+        $interrupted = 'complete_in_progress' === $session['status'] && self::settle_window_elapsed( $session );
+        if ( ! $interrupted && in_array( $session['status'], array( 'canceled', 'completed', 'complete_in_progress', 'requires_escalation', 'expired' ), true ) ) {
             return FD_UCP_Error::response( 'session_' . $session['status'], 'Session has been ' . $session['status'], 409 );
         }
 
@@ -471,7 +473,7 @@ class FD_UCP_Checkout_Controller {
 
         $payment_meta = json_decode( $session['payment_meta'] ?? '{}', true );
 
-        if ( 'payment_pending' === $session['status'] ) {
+        if ( $interrupted || 'payment_pending' === $session['status'] ) {
             return $this->resume_pending_settlement( $session, $handler_id, $credential, $payment_meta );
         }
 
@@ -524,9 +526,14 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'total_changed', "Checkout total changed, update the session to get a new quote. $mismatch", 409 );
         }
 
-        $this->update_session_row( $session['id'], array( 'status' => 'complete_in_progress' ) );
+        $order->update_meta_data( self::PENDING_CREDENTIAL_META, self::credential_fingerprint( $credential ) );
+        $order->save();
+        $this->update_session_row( $session['id'], array(
+            'status'     => 'complete_in_progress',
+            'updated_at' => current_time( 'mysql', true ),
+        ) );
 
-        return $this->settle_checkout( $order, $session, $handler_id, $credential, $payment_meta );
+        return $this->settle_checkout( $order, $session, $handler_id, $credential, $payment_meta, false );
     }
 
     private function resume_pending_settlement( array $session, string $handler_id, mixed $credential, array $payment_meta ): WP_REST_Response {
@@ -538,10 +545,10 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'order_not_payable', 'The order for this checkout no longer accepts payment', 409 );
         }
 
-        return $this->settle_checkout( $order, $session, $handler_id, $credential, $payment_meta );
+        return $this->settle_checkout( $order, $session, $handler_id, $credential, $payment_meta, true );
     }
 
-    private function settle_checkout( WC_Order $order, array $session, string $handler_id, mixed $credential, array $payment_meta ): WP_REST_Response {
+    private function settle_checkout( WC_Order $order, array $session, string $handler_id, mixed $credential, array $payment_meta, bool $resuming ): WP_REST_Response {
         $quoted_total = FD_UCP_Checkout_Pricing::total_of( json_decode( $session['totals'] ?? 'null', true ) );
 
         $settle_input = array(
@@ -549,6 +556,7 @@ class FD_UCP_Checkout_Controller {
             'handler_id'    => $handler_id,
             'credential'    => $credential,
             'checkout_meta' => $payment_meta,
+            'resume'        => $resuming,
         );
 
         try {
@@ -559,11 +567,15 @@ class FD_UCP_Checkout_Controller {
         }
 
         if ( ! empty( $result['pending'] ) ) {
-            return $this->hold_pending( $order, $session, $credential );
+            return $this->hold_pending( $order, $session );
         }
 
         if ( ! empty( $result['review'] ) ) {
             return $this->hold_for_review( $order, $session, (string) ( $result['error'] ?? 'Payment needs review' ) );
+        }
+
+        if ( empty( $result['success'] ) && $resuming ) {
+            return $this->hold_for_review( $order, $session, (string) ( $result['error'] ?? 'Payment settlement failed' ) );
         }
 
         if ( empty( $result['success'] ) ) {
@@ -602,9 +614,7 @@ class FD_UCP_Checkout_Controller {
         );
     }
 
-    private function hold_pending( WC_Order $order, array $session, mixed $credential ): WP_REST_Response {
-        $order->update_meta_data( self::PENDING_CREDENTIAL_META, self::credential_fingerprint( $credential ) );
-        $order->save();
+    private function hold_pending( WC_Order $order, array $session ): WP_REST_Response {
         $this->update_session_row( $session['id'], array(
             'status'      => 'payment_pending',
             'wc_order_id' => $order->get_id(),
@@ -633,6 +643,11 @@ class FD_UCP_Checkout_Controller {
             FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
             200
         );
+    }
+
+    private static function settle_window_elapsed( array $session ): bool {
+        $touched = strtotime( ( $session['updated_at'] ?? '' ) . ' UTC' );
+        return false === $touched || $touched < time() - self::SETTLE_WINDOW_SECONDS;
     }
 
     private static function credential_fingerprint( mixed $credential ): string {
@@ -1073,7 +1088,7 @@ class FD_UCP_Checkout_Controller {
             ARRAY_A
         );
         if ( $row && ! empty( $row['expires_at'] ) && strtotime( $row['expires_at'] ) < time() ) {
-            if ( ! in_array( $row['status'], array( 'completed', 'canceled', 'payment_pending' ), true ) ) {
+            if ( ! in_array( $row['status'], array( 'completed', 'canceled', 'payment_pending', 'complete_in_progress' ), true ) ) {
                 $this->update_session_row( $id, array(
                     'status'     => 'expired',
                     'updated_at' => current_time( 'mysql', true ),

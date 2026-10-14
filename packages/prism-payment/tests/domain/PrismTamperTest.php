@@ -77,12 +77,12 @@ final class PrismTamperTest extends TestCase {
         );
     }
 
-    private function settle( $credential, string $checkout_id = 'c1' ): array {
+    private function settle( $credential, string $checkout_id = 'c1', array $extra = array() ): array {
         return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
             'checkout_id'   => $checkout_id,
             'credential'    => $credential,
             'checkout_meta' => self::quoted_meta(),
-        ) );
+        ) + $extra );
     }
 
     private static function quoted_meta(): array {
@@ -780,5 +780,50 @@ final class PrismTamperTest extends TestCase {
         $this->settle( self::credential() );
 
         $this->assertSame( 45, $GLOBALS['fd_test_requests'][0]['args']['timeout'] );
+    }
+
+    public function test_resumed_settlement_asks_the_gateway_about_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => 'settlement_unresolved', 'transaction' => '' ) ),
+        );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+        $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+    }
+
+    public function test_resumed_settlement_completes_when_the_gateway_confirms_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertTrue( $result['success'], json_encode( $result ) );
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+    }
+
+    public function test_first_settlement_still_refuses_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential, 'c1', array( 'resume' => false ) ) );
+    }
+
+    public function test_resumed_settlement_keeps_every_other_check(): void {
+        $future = self::credential();
+        $future['paymentPayload']['payload']['authorization']['validAfter'] = (string) ( time() + 3600 );
+        $this->assertRejectedBeforeSettle( $this->settle( $future, 'c1', array( 'resume' => true ) ) );
+
+        $amount = self::credential();
+        $amount['paymentPayload']['payload']['authorization']['value'] = '1';
+        $this->assertRejectedBeforeSettle( $this->settle( $amount, 'c1', array( 'resume' => true ) ) );
+
+        $recipient = self::credential();
+        $recipient['paymentPayload']['payload']['authorization']['to'] = '0x2222222222222222222222222222222222222222';
+        $this->assertRejectedBeforeSettle( $this->settle( $recipient, 'c1', array( 'resume' => true ) ) );
     }
 }

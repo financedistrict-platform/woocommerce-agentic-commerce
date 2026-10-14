@@ -193,7 +193,8 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
     public function settle_payment( array $input ): array {
         $verified = FD_Prism_Validator::verify(
             $input['credential'] ?? null,
-            $input['checkout_meta'][ self::HANDLER_ID ]['ucp'][ self::HANDLER_ID ][0]['config'] ?? null
+            $input['checkout_meta'][ self::HANDLER_ID ]['ucp'][ self::HANDLER_ID ][0]['config'] ?? null,
+            ! empty( $input['resume'] )
         );
         if ( is_wp_error( $verified ) ) {
             return array(
