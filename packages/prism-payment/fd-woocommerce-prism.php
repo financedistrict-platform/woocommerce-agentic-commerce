@@ -71,7 +71,7 @@ function fd_prism_init() {
     fd_prism_maybe_upgrade();
 
     add_action( 'fd_ucp_return_created', function ( $order ) {
-        FD_Prism_Settlement_Summary::from_gateway()?->on_return_created( $order );
+        FD_Prism_Settlement_Summary::note_return( $order, FD_Prism_Settlement_Summary::from_gateway() );
     } );
 
     add_action('woocommerce_update_options_payment_gateways_fd_prism_x402', function() {

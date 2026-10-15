@@ -159,7 +159,7 @@ final class SettlementSummaryTest extends TestCase {
         [ $summary ] = self::summary( self::contract() );
         $order       = self::order();
 
-        $summary->on_return_created( $order );
+        FD_Prism_Settlement_Summary::note_return( $order, $summary );
 
         $this->assertCount( 1, $order->notes );
         $this->assertStringContainsString( 'Refund up to 93.50 USDC', $order->notes[0] );
@@ -169,17 +169,52 @@ final class SettlementSummaryTest extends TestCase {
         [ $summary ] = self::summary( null );
         $order       = self::order();
 
-        $summary->on_return_created( $order );
+        FD_Prism_Settlement_Summary::note_return( $order, $summary );
 
         $this->assertCount( 1, $order->notes );
         $this->assertStringContainsString( 'unavailable', $order->notes[0] );
+    }
+
+    public function test_return_created_notes_unavailable_when_gateway_is_not_usable(): void {
+        $order = self::order();
+
+        FD_Prism_Settlement_Summary::note_return( $order, null );
+
+        $this->assertCount( 1, $order->notes );
+        $this->assertStringContainsString( 'unavailable', $order->notes[0] );
+        $this->assertStringNotContainsString( 'Refund up to', $order->notes[0] );
+        $this->assertArrayNotHasKey( '_fd_prism_net_amount', $order->meta );
+    }
+
+    public function test_return_created_without_gateway_ignores_non_prism_orders(): void {
+        $order = self::order( array() );
+
+        FD_Prism_Settlement_Summary::note_return( $order, null );
+
+        $this->assertSame( array(), $order->notes );
+    }
+
+    public function test_markup_from_prism_is_stripped_from_note_and_meta(): void {
+        [ $summary ] = self::summary( self::contract( array(
+            'net'   => '93.50<script>alert(1)</script>',
+            'asset' => 'USDC<script>alert(2)</script>',
+        ) ) );
+        $order       = self::order();
+
+        FD_Prism_Settlement_Summary::note_return( $order, $summary );
+
+        $this->assertStringNotContainsString( '<script', $order->notes[0] );
+        $this->assertStringNotContainsString( '</script', $order->notes[0] );
+        foreach ( $order->meta as $value ) {
+            $this->assertStringNotContainsString( '<', (string) $value );
+        }
     }
 
     public function test_return_created_ignores_non_prism_orders(): void {
         [ $summary, $client ] = self::summary( self::contract() );
         $order                = self::order( array() );
 
-        $summary->on_return_created( $order );
+        FD_Prism_Settlement_Summary::note_return( $order, $summary );
 
         $this->assertSame( array(), $order->notes );
         $this->assertSame( 0, $client->calls );

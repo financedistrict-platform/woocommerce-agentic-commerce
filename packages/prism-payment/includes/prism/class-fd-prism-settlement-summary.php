@@ -68,10 +68,10 @@ class FD_Prism_Settlement_Summary {
         );
     }
 
-    public function on_return_created( WC_Order $order ): void {
+    public static function note_return( WC_Order $order, ?self $summary ): void {
         if ( '' === (string) $order->get_meta( '_fd_prism_tx_hash' ) ) {
             return;
         }
-        $order->add_order_note( self::refund_note( $this->for_order( $order ) ) );
+        $order->add_order_note( self::refund_note( $summary?->for_order( $order ) ) );
     }
 }
