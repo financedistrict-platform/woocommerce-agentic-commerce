@@ -17,6 +17,10 @@ class FD_Prism_Client {
         return $this->get( '/ucp/' . rawurlencode( $ucp_version ) . '/handlers' );
     }
 
+    public function get_settlement_summary( string $tx_hash ): ?array {
+        return $this->get( '/api/v2/merchant/payments/' . rawurlencode( $tx_hash ) . '/settlement', 5 );
+    }
+
     public function prepare_payment_requirements( string $amount, string $currency, string $resource_url, string $description ): ?array {
         return $this->post( '/api/v2/merchant/payment-requirements', array(
             'amount'   => $amount,
@@ -57,10 +61,10 @@ class FD_Prism_Client {
         );
     }
 
-    private function get( string $path ): ?array {
+    private function get( string $path, int $timeout = 15 ): ?array {
         $response = wp_remote_get( $this->api_url . $path, array(
             'headers' => $this->headers(),
-            'timeout' => 15,
+            'timeout' => $timeout,
         ) );
 
         return $this->parse_response( $response, "GET $path" );

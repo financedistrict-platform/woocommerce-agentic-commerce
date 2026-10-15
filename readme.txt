@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.3.11
+Stable tag: 0.3.12
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,6 +70,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 2. Prism gateway settings in WooCommerce
 
 == Changelog ==
+
+= 0.3.12 =
+* Show net received, buyer cashback, fees and the refundable amount for Prism orders.
 
 = 0.3.11 =
 * Back up the database before upgrading. The database schema moves to 1.6 and cannot be downgraded without restoring a backup.
