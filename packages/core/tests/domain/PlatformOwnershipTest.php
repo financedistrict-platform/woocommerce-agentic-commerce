@@ -58,6 +58,7 @@ final class PlatformOwnershipTest extends TestCase {
     private function seed( string $platform = self::ALPHA ): void {
         $session                = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
         $session['platform_id'] = $platform;
+        $session['session_secret_hash'] = FD_Test_Session_Secret::hash();
         $session['ucp_version'] = null;
         $session['expires_at']  = gmdate( 'Y-m-d H:i:s', time() + 3600 );
 
@@ -66,6 +67,7 @@ final class PlatformOwnershipTest extends TestCase {
             'id'          => self::SESSION_ID,
             'line_items'  => json_encode( array() ),
             'platform_id' => $platform,
+            'cart_secret_hash' => FD_Test_Session_Secret::hash(),
             'ucp_version' => null,
             'expires_at'  => gmdate( 'Y-m-d H:i:s', time() + 3600 ),
         ) );
@@ -75,6 +77,7 @@ final class PlatformOwnershipTest extends TestCase {
             '_fd_ucp_tx_reference' => '0xmine',
             '_fd_ucp_handler_id'   => 'xyz.fd.prism_payment',
             '_fd_ucp_platform_id'  => $platform,
+            '_fd_ucp_session_secret_hash' => FD_Test_Session_Secret::hash(),
         );
         $order->order_key             = self::ORDER_KEY;
         $order->status                = 'processing';
@@ -103,6 +106,10 @@ final class PlatformOwnershipTest extends TestCase {
 
     private static function as_beta(): array {
         return array( 'UCP-Agent' => 'profile="' . self::BETA . '"', 'X-API-Key' => self::BETA_KEY );
+    }
+
+    private static function secret( string $value = FD_Test_Session_Secret::SECRET ): array {
+        return array( 'UCP-Session-Secret' => $value );
     }
 
     private static function keyless( string $profile ): array {
@@ -153,28 +160,39 @@ final class PlatformOwnershipTest extends TestCase {
         $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts );
     }
 
-    public function test_every_route_that_loads_a_row_hides_it_from_another_platform(): void {
+    public function test_every_route_that_loads_a_row_needs_the_secret(): void {
         $checked = array();
         foreach ( $this->registered_routes() as $name => [ $method, $route ] ) {
             if ( ! str_contains( $route, '(?P<id>' ) ) {
                 continue;
             }
-            $this->seed();
             [ $path, $id ] = self::concrete( $route );
+            $body          = array( 'code' => 'SAVE10', 'buyer' => array( 'first_name' => 'Eve' ), 'items' => array() );
 
-            $foreign = $this->dispatch( $method, $path, self::as_beta(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'buyer' => array( 'first_name' => 'Eve' ), 'items' => array() ) );
+            $this->seed();
+            $missing = $this->dispatch( $method, $path, self::as_alpha(), array( 'id' => $id ), $body );
+            $this->assertSame( 401, $missing->get_status(), $name . ' ' . json_encode( $missing->get_data() ) );
+            $this->assertSame( 'session_secret_required', $missing->get_data()['messages'][0]['code'] ?? null, $name );
+            $this->assert_row_untouched( $name );
 
-            $this->assertSame( 404, $foreign->get_status(), $name . ' ' . json_encode( $foreign->get_data() ) );
-            $this->assertSame( array(), $this->db->updates, $name );
-            $this->assertSame( array(), FD_Test_Order_Store::$refunds, $name );
-            $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts, $name );
-            $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'], $name );
+            $this->seed();
+            $wrong = $this->dispatch( $method, $path, self::as_alpha() + self::secret( 'wrong-secret' ), array( 'id' => $id ), $body );
+            $this->assertSame( 404, $wrong->get_status(), $name . ' ' . json_encode( $wrong->get_data() ) );
+            $this->assert_row_untouched( $name );
             $checked[] = $name;
         }
         $this->assertGreaterThanOrEqual( 11, count( $checked ), implode( ', ', $checked ) );
     }
 
-    public function test_the_owning_platform_reaches_its_rows_on_every_route_that_loads_one(): void {
+    private function assert_row_untouched( string $name ): void {
+        $this->assertSame( array(), $this->db->updates, $name );
+        $this->assertSame( array(), FD_Test_Order_Store::$refunds, $name );
+        $this->assertArrayHasKey( self::SESSION_ID, $this->db->carts, $name );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'], $name );
+        $this->assertCount( 1, $this->db->sessions, $name );
+    }
+
+    public function test_the_secret_holder_reaches_its_rows_from_any_platform(): void {
         foreach ( $this->registered_routes() as $name => [ $method, $route ] ) {
             if ( ! str_contains( $route, '(?P<id>' ) ) {
                 continue;
@@ -182,26 +200,26 @@ final class PlatformOwnershipTest extends TestCase {
             $this->seed();
             [ $path, $id ] = self::concrete( $route );
 
-            $owner = $this->dispatch( $method, $path, self::as_alpha(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+            $holder = $this->dispatch( $method, $path, self::as_beta() + self::secret(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
 
-            $this->assertNotSame( 404, $owner->get_status(), $name . ' ' . json_encode( $owner->get_data() ) );
-            $this->assertNotSame( 401, $owner->get_status(), $name );
+            $this->assertNotSame( 404, $holder->get_status(), $name . ' ' . json_encode( $holder->get_data() ) );
+            $this->assertNotSame( 401, $holder->get_status(), $name );
         }
     }
 
-    public function test_rows_without_a_platform_are_unreachable_on_every_route(): void {
+    public function test_rows_without_a_valid_secret_hash_are_unreachable_on_every_route(): void {
         foreach ( $this->registered_routes() as $name => [ $method, $route ] ) {
             if ( ! str_contains( $route, '(?P<id>' ) ) {
                 continue;
             }
-            foreach ( array( null, '' ) as $stored ) {
-                $this->seed( '' );
-                $this->db->sessions[ self::SESSION_ID ]['platform_id'] = $stored;
-                $this->db->carts[ self::SESSION_ID ]['platform_id']    = $stored;
-                FD_Test_Order_Store::$orders[1001]->meta = array_diff_key( FD_Test_Order_Store::$orders[1001]->meta, array( '_fd_ucp_platform_id' => 1 ) );
+            foreach ( array( null, '', 'garbage' ) as $stored ) {
+                $this->seed();
+                $this->db->sessions[ self::SESSION_ID ]['session_secret_hash'] = $stored;
+                $this->db->carts[ self::SESSION_ID ]['cart_secret_hash']       = $stored;
+                FD_Test_Order_Store::$orders[1001]->meta['_fd_ucp_session_secret_hash'] = $stored;
                 [ $path, $id ] = self::concrete( $route );
 
-                $response = $this->dispatch( $method, $path, self::as_alpha(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+                $response = $this->dispatch( $method, $path, self::as_alpha() + self::secret(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
 
                 $this->assertSame( 404, $response->get_status(), $name );
             }
@@ -234,38 +252,71 @@ final class PlatformOwnershipTest extends TestCase {
         $this->assertSame( $first->get_data()['id'], $replay->get_data()['id'] );
     }
 
-    public function test_a_created_cart_session_and_order_carry_the_creating_platform(): void {
+    public function test_cart_checkout_hands_out_a_new_session_secret(): void {
         $cart = $this->dispatch( 'POST', '/carts', self::as_alpha(), array(), self::item_body() );
         $this->assertSame( 201, $cart->get_status(), json_encode( $cart->get_data() ) );
         $cart_id = $cart->get_data()['id'];
+        $cart_secret = $cart->get_headers()['UCP-Session-Secret'] ?? '';
+        $this->assertNotSame( '', $cart_secret );
+        $this->assertSame( hash( 'sha256', $cart_secret ), $this->db->carts[ $cart_id ]['cart_secret_hash'] );
         $this->assertSame( self::ALPHA, $this->db->carts[ $cart_id ]['platform_id'] );
+        $this->assertArrayNotHasKey( 'cart_secret', $cart->get_data() );
 
-        $foreign = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', self::as_beta(), array( 'id' => $cart_id ) );
-        $checkout = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', self::as_alpha(), array( 'id' => $cart_id ) );
+        $missing = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', self::as_alpha(), array( 'id' => $cart_id ) );
+        $wrong   = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', self::as_alpha() + self::secret( 'wrong-secret' ), array( 'id' => $cart_id ) );
+        $this->assertSame( 401, $missing->get_status() );
+        $this->assertSame( 404, $wrong->get_status() );
+        $this->assertArrayHasKey( $cart_id, $this->db->carts );
 
-        $this->assertSame( 404, $foreign->get_status() );
+        $checkout = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', self::as_alpha() + self::secret( $cart_secret ), array( 'id' => $cart_id ) );
         $this->assertSame( 201, $checkout->get_status(), json_encode( $checkout->get_data() ) );
-        $this->assertSame( self::ALPHA, $this->db->sessions[ $checkout->get_data()['checkout_session_id'] ]['platform_id'] );
+        $session_id     = $checkout->get_data()['id'];
+        $session_secret = $checkout->get_headers()['UCP-Session-Secret'] ?? '';
+        $this->assertNotSame( '', $session_secret );
+        $this->assertNotSame( $cart_secret, $session_secret );
+        $this->assertSame( self::ALPHA, $this->db->sessions[ $session_id ]['platform_id'] );
+        $this->assertArrayNotHasKey( $cart_id, $this->db->carts );
+
+        $with_cart_secret = $this->dispatch( 'GET', '/checkout-sessions/' . $session_id, self::as_alpha() + self::secret( $cart_secret ), array( 'id' => $session_id ) );
+        $with_session     = $this->dispatch( 'GET', '/checkout-sessions/' . $session_id, self::as_alpha() + self::secret( $session_secret ), array( 'id' => $session_id ) );
+        $this->assertSame( 404, $with_cart_secret->get_status() );
+        $this->assertSame( 200, $with_session->get_status(), json_encode( $with_session->get_data() ) );
+        $this->assertEquals( $with_session->get_data(), $checkout->get_data() );
     }
 
-    public function test_returns_still_answer_accepted_for_the_owning_platform(): void {
-        $response = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) );
+    public function test_two_checkouts_of_one_cart_create_one_session(): void {
+        $cart    = $this->dispatch( 'POST', '/carts', self::as_alpha(), array(), self::item_body() );
+        $cart_id = $cart->get_data()['id'];
+        $headers = self::as_alpha() + self::secret( $cart->get_headers()['UCP-Session-Secret'] );
+        $before  = count( $this->db->sessions );
+
+        $first  = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', $headers, array( 'id' => $cart_id ) );
+        $second = $this->dispatch( 'POST', '/carts/' . $cart_id . '/checkout', $headers, array( 'id' => $cart_id ) );
+
+        $this->assertSame( 201, $first->get_status(), json_encode( $first->get_data() ) );
+        $this->assertSame( 404, $second->get_status() );
+        $this->assertSame( 'cart_not_found', $second->get_data()['messages'][0]['code'] ?? null );
+        $this->assertCount( $before + 1, $this->db->sessions );
+    }
+
+    public function test_returns_still_answer_accepted_for_the_secret_holder(): void {
+        $response = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha() + self::secret(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) );
 
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
     }
 
-    public function test_the_owning_platform_reads_its_order_by_the_opaque_key(): void {
-        $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::as_alpha(), array( 'id' => self::ORDER_KEY ) );
+    public function test_the_secret_holder_reads_its_order_by_the_opaque_key(): void {
+        $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::as_alpha() + self::secret(), array( 'id' => self::ORDER_KEY ) );
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( self::ORDER_KEY, $response->get_data()['id'] );
     }
 
-    public function test_another_platform_and_unknown_keys_get_not_found_for_orders_and_returns(): void {
+    public function test_a_wrong_secret_and_unknown_keys_get_not_found_for_orders_and_returns(): void {
         $cases = array(
-            array( self::as_beta(), self::ORDER_KEY ),
-            array( self::as_alpha(), 'wc_order_unknownkey' ),
-            array( self::as_alpha(), '1001' ),
+            array( self::as_alpha() + self::secret( 'wrong-secret' ), self::ORDER_KEY ),
+            array( self::as_alpha() + self::secret(), 'wc_order_unknownkey' ),
+            array( self::as_alpha() + self::secret(), '1001' ),
         );
         foreach ( $cases as [ $headers, $key ] ) {
             foreach ( array( '/orders/' . $key, '/orders/' . $key . '/returns' ) as $path ) {
@@ -274,6 +325,13 @@ final class PlatformOwnershipTest extends TestCase {
                 $this->assertSame( 404, $response->get_status(), $path );
                 $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] ?? null, $path );
             }
+        }
+
+        foreach ( array( '/orders/' . self::ORDER_KEY, '/orders/' . self::ORDER_KEY . '/returns' ) as $path ) {
+            $response = $this->dispatch( 'GET', $path, self::as_alpha(), array( 'id' => self::ORDER_KEY ) );
+
+            $this->assertSame( 401, $response->get_status(), $path );
+            $this->assertSame( 'session_secret_required', $response->get_data()['messages'][0]['code'] ?? null, $path );
         }
     }
 
@@ -289,7 +347,7 @@ final class PlatformOwnershipTest extends TestCase {
     public function test_the_return_rate_limit_still_applies(): void {
         $statuses = array();
         for ( $i = 0; $i < 11; $i++ ) {
-            $statuses[] = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) )->get_status();
+            $statuses[] = $this->dispatch( 'POST', '/orders/' . self::ORDER_KEY . '/returns', self::as_alpha() + self::secret(), array( 'id' => self::ORDER_KEY ), array( 'items' => array() ) )->get_status();
         }
 
         $this->assertSame( 429, end( $statuses ) );
@@ -373,23 +431,6 @@ final class PlatformOwnershipTest extends TestCase {
         return array_filter( $this->registered_routes(), static fn( array $pair ): bool => str_contains( $pair[1], '(?P<id>' ) );
     }
 
-    private function assert_every_id_route_hides_the_rows_from( array $headers ): void {
-        $checked = 0;
-        foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
-            $this->seed( 'unverified:' . self::GAMMA );
-            [ $path, $id ] = self::concrete( $route );
-
-            $response = $this->dispatch( $method, $path, $headers, array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
-
-            $this->assertSame( 404, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
-            $this->assertSame( array(), $this->db->updates, $name );
-            $this->assertSame( array(), FD_Test_Order_Store::$refunds, $name );
-            $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'], $name );
-            ++$checked;
-        }
-        $this->assertGreaterThanOrEqual( 11, $checked );
-    }
-
     public function test_a_keyless_platform_creates_carts_and_sessions_under_its_unverified_principal(): void {
         $cart = $this->dispatch( 'POST', '/carts', self::keyless( self::GAMMA ), array(), self::item_body() );
         $this->assertSame( 201, $cart->get_status(), json_encode( $cart->get_data() ) );
@@ -400,38 +441,29 @@ final class PlatformOwnershipTest extends TestCase {
         $this->assertSame( 'unverified:' . self::GAMMA, $this->db->sessions[ $session->get_data()['id'] ]['platform_id'] );
     }
 
-    public function test_unverified_rows_are_invisible_to_a_registered_platform(): void {
-        $this->assert_every_id_route_hides_the_rows_from( self::as_alpha() );
-        $this->assert_every_id_route_hides_the_rows_from( self::as_beta() );
-    }
-
-    public function test_unverified_rows_are_invisible_to_another_keyless_profile(): void {
-        $this->assert_every_id_route_hides_the_rows_from( self::keyless( self::DELTA ) );
-    }
-
     public function test_the_unverified_owner_reaches_its_rows_on_every_route_that_loads_one(): void {
         foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
             $this->seed( 'unverified:' . self::GAMMA );
             [ $path, $id ] = self::concrete( $route );
 
-            $owner = $this->dispatch( $method, $path, self::keyless( self::GAMMA ), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+            $owner = $this->dispatch( $method, $path, self::keyless( self::GAMMA ) + self::secret(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
 
             $this->assertNotSame( 404, $owner->get_status(), $name . ' ' . json_encode( $owner->get_data() ) );
             $this->assertNotSame( 401, $owner->get_status(), $name );
         }
     }
 
-    public function test_rows_of_a_registered_platform_stay_hidden_from_a_keyless_caller_after_the_registry_is_emptied(): void {
-        FD_Test_WP::$options[ FD_UCP_Platform_Auth::OPTION ] = array();
-        $checked                                            = 0;
+    public function test_a_keyless_caller_with_the_secret_reaches_rows_created_by_another_profile(): void {
+        $checked = 0;
 
         foreach ( $this->id_routes() as $name => [ $method, $route ] ) {
-            $this->seed( self::GAMMA );
+            $this->seed( 'unverified:' . self::GAMMA );
             [ $path, $id ] = self::concrete( $route );
 
-            $response = $this->dispatch( $method, $path, self::keyless( self::GAMMA ), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
+            $response = $this->dispatch( $method, $path, self::keyless( self::DELTA ) + self::secret(), array( 'id' => $id ), array( 'code' => 'SAVE10', 'items' => array() ) );
 
-            $this->assertSame( 404, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
+            $this->assertNotSame( 404, $response->get_status(), $name . ' ' . json_encode( $response->get_data() ) );
+            $this->assertNotSame( 401, $response->get_status(), $name );
             ++$checked;
         }
         $this->assertGreaterThanOrEqual( 11, $checked );
@@ -465,19 +497,19 @@ final class PlatformOwnershipTest extends TestCase {
         $this->assertNotSame( $unverified->get_data()['id'], $other->get_data()['id'] );
     }
 
-    public function test_an_unverified_order_is_readable_only_by_its_creator_through_the_opaque_key(): void {
+    public function test_an_order_is_readable_only_with_its_session_secret(): void {
         $this->seed( 'unverified:' . self::GAMMA );
 
-        $owner = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::keyless( self::GAMMA ), array( 'id' => self::ORDER_KEY ) );
+        $owner = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::keyless( self::GAMMA ) + self::secret(), array( 'id' => self::ORDER_KEY ) );
         $this->assertSame( 200, $owner->get_status(), json_encode( $owner->get_data() ) );
         $this->assertSame( self::ORDER_KEY, $owner->get_data()['id'] );
 
-        foreach ( array( self::as_alpha(), self::as_beta(), self::keyless( self::DELTA ) ) as $headers ) {
-            $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, $headers, array( 'id' => self::ORDER_KEY ) );
+        $registered = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::as_alpha() + self::secret(), array( 'id' => self::ORDER_KEY ) );
+        $this->assertSame( 200, $registered->get_status(), json_encode( $registered->get_data() ) );
 
-            $this->assertSame( 404, $response->get_status() );
-            $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] ?? null );
-        }
+        $response = $this->dispatch( 'GET', '/orders/' . self::ORDER_KEY, self::keyless( self::DELTA ) + self::secret( 'wrong-secret' ), array( 'id' => self::ORDER_KEY ) );
+        $this->assertSame( 404, $response->get_status() );
+        $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] ?? null );
     }
 
     public function test_catalog_routes_stay_public_in_every_mode_whatever_the_credential(): void {

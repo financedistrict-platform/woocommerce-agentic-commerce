@@ -89,6 +89,9 @@ class FD_UCP_Installer {
             if ( self::column_exists( $sessions, 'session_token_hash' ) ) {
                 $clauses[] = 'DROP COLUMN session_token_hash';
             }
+            if ( ! self::column_exists( $sessions, 'session_secret_hash' ) ) {
+                $clauses[] = 'ADD COLUMN session_secret_hash CHAR(64) NULL';
+            }
             self::alter( $sessions, $clauses );
         }
 
@@ -99,6 +102,9 @@ class FD_UCP_Installer {
             }
             if ( self::column_exists( $carts, 'session_token_hash' ) ) {
                 $clauses[] = 'DROP COLUMN session_token_hash';
+            }
+            if ( ! self::column_exists( $carts, 'cart_secret_hash' ) ) {
+                $clauses[] = 'ADD COLUMN cart_secret_hash CHAR(64) NULL';
             }
             self::alter( $carts, $clauses );
         }
@@ -119,10 +125,12 @@ class FD_UCP_Installer {
 
         return self::column_exists( $sessions, 'platform_id' )
             && self::column_exists( $sessions, 'idempotency_hash' )
+            && self::column_exists( $sessions, 'session_secret_hash' )
             && ! self::column_exists( $sessions, 'session_token_hash' )
             && self::index_exists( $sessions, 'platform_idempotency' )
             && ! self::index_exists( $sessions, 'idempotency_key' )
             && self::column_exists( $carts, 'platform_id' )
+            && self::column_exists( $carts, 'cart_secret_hash' )
             && ! self::column_exists( $carts, 'session_token_hash' );
     }
 
@@ -164,6 +172,7 @@ class FD_UCP_Installer {
             platform_id VARCHAR(191) NULL,
             idempotency_key VARCHAR(128) NULL,
             idempotency_hash CHAR(64) NULL,
+            session_secret_hash CHAR(64) NOT NULL,
             ucp_version VARCHAR(10) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NULL,
@@ -178,6 +187,7 @@ class FD_UCP_Installer {
             id VARCHAR(64) NOT NULL,
             line_items LONGTEXT NOT NULL,
             platform_id VARCHAR(191) NULL,
+            cart_secret_hash CHAR(64) NOT NULL,
             ucp_version VARCHAR(10) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NULL,

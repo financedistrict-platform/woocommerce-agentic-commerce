@@ -13,6 +13,8 @@ ucp_curl() {
 PRODUCT_ID="${1:-42}"
 PASS=0
 FAIL=0
+HDR=$(mktemp)
+trap 'rm -f "$HDR"' EXIT
 
 pass() { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 fail() { echo "  ✗ $1: $2"; FAIL=$((FAIL + 1)); }
@@ -61,12 +63,15 @@ echo ""
 
 echo "3. Checkout — payment requirements"
 
-SESSION=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions" \
+SESSION=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
 
 SESSION_ID=$(echo "$SESSION" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 assert_not_empty "checkout session created" "$SESSION_ID"
+
+SESSION_SECRET=$(tr -d '' < "$HDR" | awk -F': ' 'tolower($1)=="ucp-session-secret"{print $2}' | tail -1)
+assert_not_empty "checkout session returns a session secret" "$SESSION_SECRET"
 
 CHECKOUT_ACCEPTS=$(echo "$SESSION" | python3 -c "
 import sys, json
@@ -109,7 +114,7 @@ echo ""
 
 echo "5. Amount recalculation on update"
 
-UPDATED=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
+UPDATED=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID"   -H "UCP-Session-Secret: $SESSION_SECRET" \n\
   -H "Content-Type: application/json" \
   -d "{
     \"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 3}],
@@ -144,7 +149,7 @@ echo ""
 
 echo "6. Complete — dummy settlement"
 
-COMPLETED=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete" \
+COMPLETED=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete"   -H "UCP-Session-Secret: $SESSION_SECRET" \n\
   -H "Content-Type: application/json" \
   -d "{
     \"payment\": {
@@ -170,7 +175,7 @@ ORDER_ID=$(echo "$COMPLETED" | python3 -c "import sys,json; print(json.load(sys.
 assert_not_empty "WooCommerce order created" "$ORDER_ID"
 assert_eq "order id is the opaque order key" "wc_order_" "${ORDER_ID:0:9}"
 
-ORDER_GET=$(ucp_curl -s "$UCP_API/orders/$ORDER_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+ORDER_GET=$(ucp_curl -s -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/orders/$ORDER_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 assert_eq "order is retrievable by its id" "$ORDER_ID" "$ORDER_GET"
 
 ORDER_LIST_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders")

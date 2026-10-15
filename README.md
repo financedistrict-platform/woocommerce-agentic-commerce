@@ -158,13 +158,23 @@ The **Platform access** setting (`fd_ucp_platform_access`, same section) decides
 | `Authenticated` | Every platform must sign its requests or send a registered key. A request without a credential gets `401 signature_missing`. |
 | `Registered only` | Only platforms with an enabled key in the list are served, signed or with their key. Any other platform gets `403 profile_not_trusted`. |
 
-Enable `Authenticated` if the shop holds sensitive buyer data. In `Open`, a presented credential is always checked: a wrong or unknown `X-API-Key` is `401 key_not_found` and an invalid signature is rejected, they never fall through to `unverified`. An `unverified:` platform is trusted on the profile URL it claims, so its carts, checkout sessions and orders are protected by their unguessable ids (UUID sessions, opaque `wc_order_...` keys) and by the `Idempotency-Key` the client chooses: anyone who claims the same unverified profile URL and knows an `Idempotency-Key` and the same create body can replay the existing session, and a different body gets `409 idempotency_key_conflict`. Register a platform to give it a private space that only its key can reach. Any other stored value of the setting is treated as `Registered only`. The `X-API-Key` path itself does not depend on the mode.
+Enable `Authenticated` if the shop holds sensitive buyer data. In `Open`, a presented credential is always checked: a wrong or unknown `X-API-Key` is `401 key_not_found` and an invalid signature is rejected, they never fall through to `unverified`. An `unverified:` platform is trusted on the profile URL it claims, so it is only an attribution and idempotency scope; carts, checkout sessions and orders are protected by their `UCP-Session-Secret`: anyone who claims the same unverified profile URL and knows an `Idempotency-Key` and the same create body can replay the existing session, and a different body gets `409 idempotency_key_conflict`. Any other stored value of the setting is treated as `Registered only`. The `X-API-Key` path itself does not depend on the mode.
 
 - **Block a platform.** When every key registered for a profile is disabled, the store refuses that profile on every path with `403 profile_not_trusted`, before it checks the signature or key. A profile with at least one enabled key is not blocked, so you can rotate keys by issuing a new key and disabling the old one (the old key then gets `401 key_not_found`). Deleting the keys removes the block. In `Open` mode a disabled or unregistered profile can still come back as `unverified` under a different or near-identical profile URL (other path case, percent-encoding, a trailing dot in the host, a query string); use `Authenticated` or `Registered only` when this matters.
 
-The platform id is the verified profile URL (lower-case host, no fragment, no trailing slash), or `unverified:` followed by that URL for a platform without a credential. A registered platform id always starts with `https://`, so an `unverified:` id can never equal one. A cart, checkout session or order belongs to the platform id that created it. Any other platform id, and any record created before the upgrade to schema `1.6.0`, gets `404` as if the record did not exist. The limit of 180 characters keeps the prefixed id within the 191-character storage column. Registering a platform that used to shop without a key starts a new private space: what it created as `unverified` is no longer reachable by it.
+The platform id is the verified profile URL (lower-case host, no fragment, no trailing slash), or `unverified:` followed by that URL for a platform without a credential. A registered platform id always starts with `https://`, so an `unverified:` id can never equal one. The platform id is stored on carts, sessions and orders for attribution and scopes `Idempotency-Key`. It does not decide who may read or change them. The limit of 180 characters keeps the prefixed id within the 191-character storage column.
 
 On upgrade the old `fd_ucp_signed_access` setting moves to `fd_ucp_platform_access`: `Registered only` stays `Registered only`, any other value becomes `Open`.
+
+### Session ownership
+
+`POST /carts`, `POST /checkout-sessions` and `POST /carts/{id}/checkout` answer `201` with a `UCP-Session-Secret` response header, once. The store keeps only its SHA-256 hash. Send it as the `UCP-Session-Secret` request header on every later call for that cart, session or order. A replayed create with the same `Idempotency-Key` returns the stored session without the header.
+
+`POST /carts/{id}/checkout` deletes the cart and returns the new checkout session, the same body as `POST /checkout-sessions`, with its own new secret. The cart secret does not open the session.
+
+Check order on every route: platform access, then the secret (`401` when missing, `404` when wrong), then the version pin, then the body.
+
+URLs in responses carry ids only. `continue_url` is a WooCommerce page for the buyer and needs no header.
 
 | Problem | Answer |
 |---|---|
@@ -176,7 +186,8 @@ On upgrade the old `fd_ucp_signed_access` setting moves to `fd_ucp_platform_acce
 | Key is not ES256 (P-256) or Ed25519 | `400 algorithm_unsupported` |
 | Platform profile cannot be fetched while verifying a signature | `424 profile_unreachable` |
 | `X-API-Key` is registered for another platform profile, the platform profile has all its keys disabled, or (in `Registered only` mode) a request comes from a profile without an enabled key | `403 profile_not_trusted` |
-| Cart, checkout session, buyer, promotions, order or returns of another platform | `404` (`cart_not_found`, `checkout_not_found`, `session_not_found`, `order_not_found`) |
+| Cart, checkout session, buyer, promotions, order or returns without `UCP-Session-Secret` | `401 session_secret_required` |
+| The same routes with a wrong secret, or an unknown id | `404` (`cart_not_found`, `checkout_not_found`, `order_not_found`) |
 | `POST /checkout-sessions` repeating an `Idempotency-Key` with a different body | `409 idempotency_key_conflict` |
 | `Idempotency-Key` longer than 128 characters | `400 invalid_idempotency_key` |
 | Cart or checkout session could not be stored | `503 storage_unavailable` |
@@ -224,7 +235,7 @@ Items are priced at the current catalog price on create, on every update and aga
 
 Discount totals are negative minor-unit amounts, and `total = subtotal + fulfillment + tax + discount`. Version `2026-01-23` serves discount amounts as positive numbers because its total schema has a minimum of 0.
 
-When a settlement is received but held for merchant review (amount mismatch, reused transaction, or a handler-reported inconsistency), `complete` answers `200` with the checkout in `status: requires_escalation`, a `continue_url` (the https order-received page of the held order) and an error message `{ "type": "error", "code": "payment_on_hold", "severity": "requires_buyer_review" }`. `GET` on the held session returns the same shape to the owning platform. The order stays `on-hold` and a repeated `complete` answers `409 session_requires_escalation`.
+When a settlement is received but held for merchant review (amount mismatch, reused transaction, or a handler-reported inconsistency), `complete` answers `200` with the checkout in `status: requires_escalation`, a `continue_url` (the https order-received page of the held order) and an error message `{ "type": "error", "code": "payment_on_hold", "severity": "requires_buyer_review" }`. `GET` on the held session returns the same shape to the caller that holds the `UCP-Session-Secret`. The order stays `on-hold` and a repeated `complete` answers `409 session_requires_escalation`.
 
 The gateway answer counts as a refusal only when it is a 4xx, or when it reports a reason that is known to happen before anything is broadcast (for example an unsupported network or token, a bad signature, an expired authorization or insufficient funds). Anything else that is not a success leaves the outcome unknown (timeout, transport error, gateway 5xx, an unreadable answer, `settlement_pending`, `unexpected_settle_error`, `receipt_timeout`, or any reason the plugin does not list), and the money may already have moved. `complete` then answers `202` with the checkout in `status: complete_in_progress` and a `payment_pending` message. The WooCommerce order stays `pending`. Call `complete` again with the same payment credential until it answers `200`. A different credential answers `409 payment_pending_mismatch`, and `update` and `cancel` answer `409`. If the gateway reports the signed payment as already used (`authorization_consumed`) or unresolved (`settlement_unresolved`), the order is held for merchant review as above. Each time a checkout is held as pending, an order note records the reason and the time. A checkout left in `complete_in_progress` for more than 60 seconds (for example after a PHP worker died while waiting for the gateway) resumes the same way, with the same credential only. When a pending checkout is retried, the signed payment's expiry is not checked locally, because the gateway decides; a gateway answer other than success that does not signal a plain outage (no answer, 5xx, `settlement_pending`, `unexpected_settle_error`) holds the order for review.
 
@@ -242,7 +253,7 @@ The gateway answer counts as a refusal only when it is a 4xx, or when it reports
 |--------|----------|-------------|
 | `GET` | `/wp-json/fd-ucp/v1/orders/{id}` | Get order details |
 
-`{id}` is the opaque order id returned by `complete` (the WooCommerce order key, `wc_order_...`), never the sequential order number. Orders cannot be listed: there is no `GET /orders`. An unknown id and an order created by another platform both answer `404 order_not_found`. The curl suites under `packages/*/tests/curl` need the demo store to be seeded with a platform key first.
+`{id}` is the opaque order id returned by `complete` (the WooCommerce order key, `wc_order_...`), never the sequential order number. Orders cannot be listed: there is no `GET /orders`. The call needs the `UCP-Session-Secret` of the checkout session that placed the order. An unknown id and a wrong secret both answer `404 order_not_found`. The curl suites under `packages/*/tests/curl` need the demo store to be seeded with a platform key first.
 
 ### UCP Capabilities
 

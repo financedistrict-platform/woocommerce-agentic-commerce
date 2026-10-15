@@ -18,6 +18,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         $session                 = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
         $session['platform_id']  = self::PLATFORM;
+        $session['session_secret_hash'] = FD_Test_Session_Secret::hash();
         $session['ucp_version']  = null;
         $session['expires_at']   = gmdate( 'Y-m-d H:i:s', time() + 3600 );
         $session['payment_meta'] = json_encode( array( 'xyz.fd.prism_payment' => array( 'prepared_amount' => 4695, 'prepared_at' => time() ) ) );
@@ -60,7 +61,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         return $controller->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            array( 'UCP-Session-Secret' => FD_Test_Session_Secret::SECRET ),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( $instrument ) ) )
         ) );
@@ -119,7 +120,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
 
         $response = ( new FD_UCP_Checkout_Controller( $registry ) )->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            array( 'UCP-Session-Secret' => FD_Test_Session_Secret::SECRET ),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( array( 'handler_id' => 'x402', 'credential' => array( 'a' => 1 ) ) ) ) )
         ) );
@@ -163,7 +164,7 @@ final class BackCompatOriginalAgentTest extends TestCase {
         $registry->register( $this->handler );
         $response = ( new FD_UCP_Checkout_Controller( $registry ) )->get_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID,
-            array( 'UCP-Agent' => 'profile="https://agent.example/p"' ),
+            array( 'UCP-Agent' => 'profile="https://agent.example/p"', 'UCP-Session-Secret' => FD_Test_Session_Secret::SECRET ),
             array( 'id' => self::SESSION_ID )
         ) );
         $resolver->setValue( $plugin, null );

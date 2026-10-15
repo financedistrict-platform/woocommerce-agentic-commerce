@@ -76,6 +76,7 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
 }
 
 require_once __DIR__ . '/support/wp-test-stubs.php';
+require_once __DIR__ . '/support/session-secret-fixture.php';
 require_once __DIR__ . '/golden/capture-stubs.php';
 
 if ( ! defined( 'FD_UCP_VERSION' ) ) {
@@ -109,6 +110,7 @@ require_once $base . '/ucp/class-fd-ucp-agent-profile-fetcher.php';
 require_once $base . '/ucp/class-fd-ucp-version-resolver.php';
 require_once $base . '/ucp/class-fd-ucp-platform-auth.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
+require_once $base . '/ucp/class-fd-ucp-session-secret.php';
 require_once $base . '/ucp/class-fd-ucp-ownership.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';

@@ -15,12 +15,15 @@ final class CheckoutTamperTest extends TestCase {
 
     private FD_Test_Wpdb $db;
     private object $handler;
+    private static string $secret = FD_Test_Session_Secret::SECRET;
 
     protected function setUp(): void {
         FD_Test_WP::reset();
+        self::$secret = FD_Test_Session_Secret::SECRET;
 
         $session                       = FD_Test_Golden_Renderer::input( 'checkout-session.json' );
         $session['platform_id'] = self::PLATFORM;
+        $session['session_secret_hash'] = FD_Test_Session_Secret::hash();
         $session['ucp_version'] = null;
         $session['expires_at']  = gmdate( 'Y-m-d H:i:s', time() + 3600 );
 
@@ -96,8 +99,13 @@ final class CheckoutTamperTest extends TestCase {
             '_fd_ucp_tx_reference' => $tx_reference,
             '_fd_ucp_handler_id'   => 'xyz.fd.prism_payment',
             '_fd_ucp_platform_id'  => $platform,
+            '_fd_ucp_session_secret_hash' => FD_Test_Session_Secret::hash(),
         );
         return $order;
+    }
+
+    private static function secret_headers( array $extra = array() ): array {
+        return $extra + array( 'UCP-Session-Secret' => self::$secret );
     }
 
     private static function as_platform( ?string $platform ): void {
@@ -106,14 +114,14 @@ final class CheckoutTamperTest extends TestCase {
 
     private static function request( string $route, ?string $platform, array $params = array(), array $body = array() ): WP_REST_Request {
         self::as_platform( $platform );
-        return new WP_REST_Request( $route, array(), $params, $body );
+        return new WP_REST_Request( $route, self::secret_headers(), $params, $body );
     }
 
     private function update( array $body, ?string $platform = self::PLATFORM ): WP_REST_Response {
         self::as_platform( $platform );
         return $this->controller()->update_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID,
-            array(),
+            self::secret_headers(),
             array( 'id' => self::SESSION_ID ),
             $body
         ) );
@@ -132,7 +140,7 @@ final class CheckoutTamperTest extends TestCase {
         self::as_platform( $platform );
         return $this->controller()->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            self::secret_headers(),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( array(
                 'handler_id' => $this->handler->id(),
@@ -389,7 +397,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $response = $this->controller()->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            self::secret_headers(),
             array( 'id' => self::SESSION_ID ),
             array()
         ) );
@@ -644,7 +652,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( array(), $this->handler->settled );
     }
 
-    public function test_get_on_a_held_session_returns_the_hold_shape_to_its_owner_only(): void {
+    public function test_get_on_a_held_session_returns_the_hold_shape_to_the_secret_holder_only(): void {
         $this->db->sessions[ self::SESSION_ID ]['status'] = 'requires_escalation';
         $this->order()->update_status( 'on-hold', 'held' );
         $route = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID;
@@ -652,7 +660,8 @@ final class CheckoutTamperTest extends TestCase {
         $owner = $this->controller()->get_session( self::request( $route, self::PLATFORM, array( 'id' => self::SESSION_ID ) ) );
         $this->assertHeld( $owner );
 
-        $foreign = $this->controller()->get_session( self::request( $route, self::OTHER_PLATFORM, array( 'id' => self::SESSION_ID ) ) );
+        self::$secret = 'wrong-secret';
+        $foreign      = $this->controller()->get_session( self::request( $route, self::PLATFORM, array( 'id' => self::SESSION_ID ) ) );
         $this->assertSame( 404, $foreign->get_status(), json_encode( $foreign->get_data() ) );
         $this->assertArrayNotHasKey( 'continue_url', $foreign->get_data() );
     }
@@ -706,12 +715,12 @@ final class CheckoutTamperTest extends TestCase {
         $row = $this->db->sessions[ wp_generate_uuid4() ];
         $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( self::PLATFORM, $row['platform_id'] );
-        $this->assertSame( array(), $response->get_headers() );
+        $this->assertSame( hash( 'sha256', $response->get_headers()['UCP-Session-Secret'] ), $row['session_secret_hash'] );
         $this->assertNull( $row['idempotency_key'] );
         $this->assertNull( $row['idempotency_hash'] );
     }
 
-    public static function foreign_platforms(): array {
+    public static function wrong_secret_callers(): array {
         return array(
             'no platform'      => array( null ),
             'another platform' => array( self::OTHER_PLATFORM ),
@@ -719,12 +728,13 @@ final class CheckoutTamperTest extends TestCase {
         );
     }
 
-    #[DataProvider( 'foreign_platforms' )]
-    public function test_checkout_session_routes_reject_a_foreign_platform( ?string $platform ): void {
+    #[DataProvider( 'wrong_secret_callers' )]
+    public function test_checkout_session_routes_reject_a_wrong_secret( ?string $platform ): void {
         $this->quoted_session( 4695, 4695, self::untaxed_totals() );
         $route   = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID;
         $params  = array( 'id' => self::SESSION_ID );
-        $headers = array( 'UCP-Agent' => '' );
+        self::$secret = 'wrong-secret';
+        $headers      = self::secret_headers( array( 'UCP-Agent' => '' ) );
         self::as_platform( $platform );
 
         $responses = array(
@@ -743,9 +753,9 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( array(), $this->db->updates );
     }
 
-    public function test_checkout_session_without_a_stored_platform_is_unreachable(): void {
-        foreach ( array( null, '' ) as $stored ) {
-            $this->db->sessions[ self::SESSION_ID ]['platform_id'] = $stored;
+    public function test_checkout_session_without_a_valid_secret_hash_is_unreachable(): void {
+        foreach ( array( null, '', 'garbage' ) as $stored ) {
+            $this->db->sessions[ self::SESSION_ID ]['session_secret_hash'] = $stored;
 
             $response = $this->controller()->get_session( self::request( '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID, self::PLATFORM, array( 'id' => self::SESSION_ID ) ) );
 
@@ -822,16 +832,16 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 503, $response->get_status(), json_encode( $response->get_data() ) );
     }
 
-    #[DataProvider( 'foreign_platforms' )]
-    public function test_order_get_rejects_a_foreign_platform( ?string $platform ): void {
+    #[DataProvider( 'wrong_secret_callers' )]
+    public function test_order_get_rejects_a_wrong_secret( ?string $platform ): void {
         self::as_platform( $platform );
 
-        $response = ( new FD_UCP_Order_Controller() )->get_order( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD', array( 'UCP-Agent' => '' ), array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
+        $response = ( new FD_UCP_Order_Controller() )->get_order( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD', self::secret_headers( array( 'UCP-Agent' => '', 'UCP-Session-Secret' => 'wrong-secret' ) ), array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
 
         $this->assertSame( 404, $response->get_status() );
     }
 
-    public function test_order_without_a_stored_platform_is_unreachable(): void {
+    public function test_order_without_a_stored_secret_hash_is_unreachable(): void {
         $this->order()->meta = array( '_fd_ucp_handler_id' => 'xyz.fd.prism_payment', '_fd_ucp_tx_reference' => '0xmine' );
 
         $get = ( new FD_UCP_Order_Controller() )->get_order( self::request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD', self::PLATFORM, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
@@ -839,11 +849,11 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 404, $get->get_status() );
     }
 
-    #[DataProvider( 'foreign_platforms' )]
-    public function test_returns_reject_a_foreign_platform( ?string $platform ): void {
+    #[DataProvider( 'wrong_secret_callers' )]
+    public function test_returns_reject_a_wrong_secret( ?string $platform ): void {
         $this->order()->status = 'processing';
         $controller            = new FD_UCP_Returns_Controller();
-        $headers               = array( 'UCP-Agent' => '' );
+        $headers               = array( 'UCP-Agent' => '', 'UCP-Session-Secret' => 'wrong-secret' );
         self::as_platform( $platform );
 
         $create = $controller->create_return( new WP_REST_Request( '/fd-ucp/v1/orders/wc_order_Zk3q9XvT1aBcD/returns', $headers, array( 'id' => 'wc_order_Zk3q9XvT1aBcD' ) ) );
@@ -867,11 +877,11 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertCount( 1, $this->order()->get_meta( '_fd_ucp_return_requests' ) );
     }
 
-    #[DataProvider( 'foreign_platforms' )]
-    public function test_buyer_identity_rejects_a_foreign_platform( ?string $platform ): void {
+    #[DataProvider( 'wrong_secret_callers' )]
+    public function test_buyer_identity_rejects_a_wrong_secret( ?string $platform ): void {
         $controller = new FD_UCP_Buyer_Identity_Controller();
         $route      = '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/buyer';
-        $headers    = array( 'UCP-Agent' => '' );
+        $headers    = array( 'UCP-Agent' => '', 'UCP-Session-Secret' => 'wrong-secret' );
         self::as_platform( $platform );
 
         $get = $controller->get_buyer( new WP_REST_Request( $route, $headers, array( 'id' => self::SESSION_ID ) ) );
@@ -892,33 +902,38 @@ final class CheckoutTamperTest extends TestCase {
         self::as_platform( $platform );
         return ( new FD_UCP_Promotions_Controller( $this->controller() ) )->apply( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/promotions',
-            array( 'UCP-Agent' => '' ),
+            self::secret_headers( array( 'UCP-Agent' => '' ) ),
             array( 'id' => self::SESSION_ID ),
             array( 'code' => $code )
         ) );
     }
 
-    #[DataProvider( 'foreign_platforms' )]
-    public function test_promotions_reject_a_foreign_platform( ?string $platform ): void {
+    #[DataProvider( 'wrong_secret_callers' )]
+    public function test_promotions_reject_a_wrong_secret( ?string $platform ): void {
+        self::$secret = 'wrong-secret';
+
         $this->assertSame( 404, $this->promote( 'SAVE10', $platform )->get_status() );
     }
 
-    public function test_cart_belongs_to_the_creating_platform_and_carries_into_its_checkout_session(): void {
-        $carts   = new FD_UCP_Cart_Controller();
+    public function test_cart_secret_opens_the_cart_and_its_checkout_hands_out_a_new_session_secret(): void {
+        $carts   = new FD_UCP_Cart_Controller( $this->controller() );
         $created = $carts->create_cart( new WP_REST_Request( '/fd-ucp/v1/carts', array( 'UCP-Agent' => '' ), array(), self::one_item() ) );
         $cart_id = $created->get_data()['id'];
         $route   = '/fd-ucp/v1/carts/' . $cart_id;
+        $secret  = $created->get_headers()['UCP-Session-Secret'] ?? '';
         $this->assertSame( self::PLATFORM, $this->db->carts[ $cart_id ]['platform_id'] );
 
-        self::as_platform( self::OTHER_PLATFORM );
-        $foreign = $carts->get_cart( new WP_REST_Request( $route, array( 'UCP-Agent' => '' ), array( 'id' => $cart_id ) ) );
-        $checkout = $carts->checkout( self::request( $route . '/checkout', self::PLATFORM, array( 'id' => $cart_id ) ) );
+        $wrong    = $carts->get_cart( new WP_REST_Request( $route, array( 'UCP-Agent' => '', 'UCP-Session-Secret' => 'wrong-secret' ), array( 'id' => $cart_id ) ) );
+        $checkout = $carts->checkout( new WP_REST_Request( $route . '/checkout', array( 'UCP-Session-Secret' => $secret ), array( 'id' => $cart_id ) ) );
 
         $this->assertSame( 201, $created->get_status() );
-        $this->assertSame( array(), $created->get_headers() );
-        $this->assertSame( 404, $foreign->get_status() );
+        $this->assertNotSame( '', $secret );
+        $this->assertSame( 404, $wrong->get_status() );
         $this->assertSame( 201, $checkout->get_status(), json_encode( $checkout->get_data() ) );
-        $this->assertSame( self::PLATFORM, $this->db->sessions[ $checkout->get_data()['checkout_session_id'] ]['platform_id'] ?? null );
+        $session_id = $checkout->get_data()['id'];
+        $this->assertSame( self::PLATFORM, $this->db->sessions[ $session_id ]['platform_id'] ?? null );
+        $this->assertNotSame( $secret, $checkout->get_headers()['UCP-Session-Secret'] ?? '' );
+        $this->assertArrayNotHasKey( $cart_id, $this->db->carts );
     }
 
     public function test_owner_sees_the_recorded_return_request(): void {
@@ -963,7 +978,7 @@ final class CheckoutTamperTest extends TestCase {
     private function complete_with_dummy( FD_Payment_Registry $registry, array $credential ): WP_REST_Response {
         return ( new FD_UCP_Checkout_Controller( $registry ) )->complete_session( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/complete',
-            array(),
+            self::secret_headers(),
             array( 'id' => self::SESSION_ID ),
             array( 'payment' => array( 'instruments' => array( array(
                 'handler_id' => self::DUMMY_ID,
@@ -1063,19 +1078,21 @@ final class CheckoutTamperTest extends TestCase {
     }
 
     private function new_cart( int $quantity = 2 ): array {
-        $carts   = new FD_UCP_Cart_Controller();
+        $carts   = new FD_UCP_Cart_Controller( $this->controller() );
         $created = $carts->create_cart( new WP_REST_Request(
             '/fd-ucp/v1/carts',
             array(),
             array(),
             array( 'line_items' => array( array( 'item' => array( 'id' => '101' ), 'quantity' => $quantity ) ) )
         ) );
-        return array( $carts, self::PLATFORM, (string) $created->get_data()['id'] );
+        $cart_id = (string) $created->get_data()['id'];
+        $this->db->carts[ $cart_id ]['cart_secret_hash'] = FD_Test_Session_Secret::hash();
+        return array( $carts, self::PLATFORM, $cart_id );
     }
 
     private function cart_request( string $platform, string $cart_id, array $body = array() ): WP_REST_Request {
         self::as_platform( $platform );
-        return new WP_REST_Request( '/fd-ucp/v1/carts/' . $cart_id, array(), array( 'id' => $cart_id ), $body );
+        return new WP_REST_Request( '/fd-ucp/v1/carts/' . $cart_id, self::secret_headers(), array( 'id' => $cart_id ), $body );
     }
 
     private function make_cart_unavailable( ?FD_Test_Product $replacement ): void {
@@ -1131,7 +1148,7 @@ final class CheckoutTamperTest extends TestCase {
         $response = $carts->checkout( $this->cart_request( $platform, $cart_id ) );
 
         $this->assertSame( 201, $response->get_status(), json_encode( $response->get_data() ) );
-        $session_id = $response->get_data()['checkout_session_id'];
+        $session_id = $response->get_data()['id'];
         $items      = json_decode( $this->db->sessions[ $session_id ]['line_items'], true );
         $this->assertSame( 2500, $items[0]['item']['price'] );
         $this->assertSame( array( 'subtotal' => 5000, 'total' => 5000 ), $this->stored_totals( $session_id ) );
@@ -1823,7 +1840,7 @@ final class CheckoutTamperTest extends TestCase {
         self::as_platform( self::PLATFORM );
         return ( new FD_UCP_Buyer_Identity_Controller() )->update_buyer( new WP_REST_Request(
             '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/buyer',
-            array( 'UCP-Agent' => '' ),
+            self::secret_headers( array( 'UCP-Agent' => '' ) ),
             array( 'id' => self::SESSION_ID ),
             $body
         ) );

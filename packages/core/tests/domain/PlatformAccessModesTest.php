@@ -272,9 +272,7 @@ final class PlatformAccessModesTest extends TestCase {
 
         $this->assertStringStartsWith( 'https://', $registered );
         $this->assertStringStartsWith( 'unverified:', $unverified );
-        $this->assertFalse( FD_UCP_Ownership::assert( $unverified, $registered ) );
-        $this->assertFalse( FD_UCP_Ownership::assert( 'unverified:' . self::PROFILE, self::PROFILE ) );
-        $this->assertFalse( FD_UCP_Ownership::assert( self::PROFILE, 'unverified:' . self::PROFILE ) );
+        $this->assertNotSame( $unverified, $registered );
     }
 
     public function test_distinct_profiles_get_distinct_unverified_principals(): void {

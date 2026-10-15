@@ -895,11 +895,11 @@ final class FD_Test_Wpdb {
     public static function current_schema(): array {
         return array(
             'wp_fd_ucp_checkout_sessions' => array(
-                'columns' => array( 'id', 'status', 'platform_id', 'idempotency_key', 'idempotency_hash', 'ucp_version' ),
+                'columns' => array( 'id', 'status', 'platform_id', 'idempotency_key', 'idempotency_hash', 'session_secret_hash', 'ucp_version' ),
                 'indexes' => array( 'PRIMARY', 'status', 'wc_order_id', 'platform_idempotency' ),
             ),
             'wp_fd_ucp_carts'             => array(
-                'columns' => array( 'id', 'line_items', 'platform_id', 'ucp_version' ),
+                'columns' => array( 'id', 'line_items', 'platform_id', 'cart_secret_hash', 'ucp_version' ),
                 'indexes' => array( 'PRIMARY' ),
             ),
             'wp_fd_ucp_payment_claims'    => array(
@@ -1057,6 +1057,9 @@ final class FD_Test_Wpdb {
 
     public function delete( string $table, array $where ): int {
         $rows = &$this->table( $table );
+        if ( ! isset( $rows[ $where['id'] ] ) ) {
+            return 0;
+        }
         unset( $rows[ $where['id'] ] );
         return 1;
     }
