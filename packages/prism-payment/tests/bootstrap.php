@@ -196,6 +196,30 @@ if ( ! class_exists( 'FD_Test_Claims_Wpdb' ) ) {
     }
 }
 
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+    function wp_strip_all_tags( string $str ): string {
+        return preg_replace( '/<[^>]*>/', '', $str );
+    }
+}
+
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+    function sanitize_text_field( string $str ): string {
+        return trim( wp_strip_all_tags( $str ) );
+    }
+}
+
+if ( ! class_exists( 'WC_Order' ) ) {
+    class WC_Order {
+        public array $meta = array();
+        public array $notes = array();
+        public function get_meta( string $k ) { return $this->meta[ $k ] ?? ''; }
+        public function update_meta_data( string $k, $v ): void { $this->meta[ $k ] = $v; }
+        public function save_meta_data(): void {}
+        public function save(): void {}
+        public function add_order_note( string $n ): void { $this->notes[] = $n; }
+    }
+}
+
 if ( ! defined( 'FD_PRISM_VERSION' ) ) {
     preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-prism.php' ), $fd_prism_version );
     define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
@@ -219,5 +243,6 @@ require_once $core . '/ucp/wire/class-fd-ucp-wire-20260123.php';
 require_once $core . '/ucp/class-fd-ucp-version-registry.php';
 require_once $core . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/prism/class-fd-prism-client.php';
+require_once $base . '/prism/class-fd-prism-settlement-summary.php';
 require_once $base . '/prism/class-fd-prism-handler.php';
 require_once $base . '/prism/class-fd-prism-gateway.php';

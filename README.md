@@ -182,7 +182,7 @@ On upgrade the old `fd_ucp_signed_access` setting moves to `fd_ucp_platform_acce
 | Cart or checkout session could not be stored | `503 storage_unavailable` |
 
 An `Idempotency-Key` is scoped to the calling platform: repeating it with the same body returns the stored session (`200`), another platform using the same value gets its own session.
-`POST /orders/{id}/returns` (with the opaque order id) records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
+`POST /orders/{id}/returns` (with the opaque order id) records a return request (`202`, status `requested`) and an order note. It never creates a refund. The merchant reviews it and refunds from the order screen. For Prism orders the order note and the Prism box on the order screen show the net amount received: buyer cashback is paid on-chain at settlement and is not returned, so refund up to the net amount. If Prism cannot be reached, both say the summary is unavailable. `GET /orders/{id}/returns` lists the merchant's refunds and the buyer's return requests.
 
 ### Prism Console Setup
 

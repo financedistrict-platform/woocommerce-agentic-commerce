@@ -77,6 +77,7 @@ class FD_UCP_Returns_Controller {
 		$order->update_meta_data( self::REQUESTS_META, $history );
 		$order->add_order_note( 'UCP buyer requested a return: ' . $return['reason'] . '. Review it and issue any refund from the order screen.' );
 		$order->save();
+		do_action( 'fd_ucp_return_created', $order, $return );
 
 		return new WP_REST_Response( array(
 			'ucp'    => FD_UCP_Request_Context::current()->wire()->envelope( array() ),

@@ -118,6 +118,23 @@ class FD_Prism_Order_Meta_Box {
             echo '<dd>' . esc_html( $label ) . '</dd>';
         }
 
+        $summary = FD_Prism_Settlement_Summary::from_gateway()?->for_order( $order );
+        if ( $summary ) {
+            $rows = array(
+                __( 'Net received', 'fd-prism-for-woocommerce' )   => $summary['net'] . ' ' . $summary['asset'],
+                __( 'Buyer cashback', 'fd-prism-for-woocommerce' ) => $summary['cashback'] . ' ' . $summary['asset'],
+                __( 'Fees', 'fd-prism-for-woocommerce' )           => $summary['fee'] . ' ' . $summary['asset'],
+                __( 'Refundable', 'fd-prism-for-woocommerce' )     => 'up to ' . $summary['net'] . ' ' . $summary['asset'],
+            );
+            foreach ( $rows as $row_label => $row_value ) {
+                echo '<dt>' . esc_html( $row_label ) . '</dt>';
+                echo '<dd>' . esc_html( $row_value ) . '</dd>';
+            }
+        } else {
+            echo '<dt>' . esc_html__( 'Refundable', 'fd-prism-for-woocommerce' ) . '</dt>';
+            echo '<dd>' . esc_html__( 'Unavailable. Check the Prism portal.', 'fd-prism-for-woocommerce' ) . '</dd>';
+        }
+
         echo '</dl>';
     }
 
