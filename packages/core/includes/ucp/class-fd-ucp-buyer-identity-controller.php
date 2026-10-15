@@ -81,6 +81,11 @@ class FD_UCP_Buyer_Identity_Controller {
 	}
 
 	private function load_session( WP_REST_Request $request ) {
+		$presented = FD_UCP_Ownership::presented( $request );
+		if ( '' === $presented ) {
+			return FD_UCP_Ownership::secret_required();
+		}
+
 		$id = $request->get_param( 'id' );
 
 		global $wpdb;
@@ -90,8 +95,8 @@ class FD_UCP_Buyer_Identity_Controller {
 			ARRAY_A
 		);
 
-		if ( ! $session || ! FD_UCP_Ownership::owns_row( $session ) ) {
-			return FD_UCP_Error::response( 'session_not_found', 'Session not found', 404 );
+		if ( ! $session || ! FD_UCP_Ownership::owns( $session, 'session_secret_hash', $presented ) ) {
+			return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
 		}
 
 		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );

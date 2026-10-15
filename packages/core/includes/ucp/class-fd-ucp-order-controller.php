@@ -14,7 +14,7 @@ class FD_UCP_Order_Controller {
     }
 
     public function get_order( WP_REST_Request $request ): WP_REST_Response {
-        $order = self::resolve( (string) $request->get_param( 'id' ) );
+        $order = self::resolve( $request );
         if ( $order instanceof WP_REST_Response ) {
             return $order;
         }
@@ -25,10 +25,16 @@ class FD_UCP_Order_Controller {
         );
     }
 
-    public static function resolve( string $order_key ): WC_Order|WP_REST_Response {
-        $order = '' === $order_key ? false : wc_get_order( wc_get_order_id_by_order_key( $order_key ) );
+    public static function resolve( WP_REST_Request $request ): WC_Order|WP_REST_Response {
+        $presented = FD_UCP_Ownership::presented( $request );
+        if ( '' === $presented ) {
+            return FD_UCP_Ownership::secret_required();
+        }
 
-        if ( ! $order || ! $order->get_meta( '_fd_ucp_handler_id' ) || ! FD_UCP_Ownership::owns_order( $order ) ) {
+        $order_key = (string) $request->get_param( 'id' );
+        $order     = '' === $order_key ? false : wc_get_order( wc_get_order_id_by_order_key( $order_key ) );
+
+        if ( ! $order || ! $order->get_meta( '_fd_ucp_handler_id' ) || ! FD_UCP_Ownership::owns_order( $order, $presented ) ) {
             return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 

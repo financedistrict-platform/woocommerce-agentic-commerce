@@ -129,7 +129,7 @@ class FD_UCP_Checkout_Controller {
         $payment_meta = $this->registry->prepare_all( $prepare_input );
 
         $now    = current_time( 'mysql', true );
-        $stored = $this->insert_session( array(
+        $secret = $this->store_session( array(
             'id'               => $session_id,
             'status'           => 'incomplete',
             'currency'         => $currency,
@@ -148,7 +148,7 @@ class FD_UCP_Checkout_Controller {
             'expires_at'       => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
         ) );
 
-        if ( ! $stored ) {
+        if ( null === $secret ) {
             $quote['order']->update_status( 'cancelled', 'UCP checkout session could not be stored.' );
             $existing = $idempotency_key ? $this->load_session_by_idempotency_key( $idempotency_key ) : null;
             if ( $existing ) {
@@ -157,9 +157,7 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::response( 'storage_unavailable', 'The checkout session could not be stored', 503 );
         }
 
-        $session = $this->load_session( $session_id );
-
-        return new WP_REST_Response( FD_UCP_Formatter::format_checkout_session( $session, $this->registry ), 201 );
+        return $this->created_response( $session_id, $secret );
     }
 
     private function replay_session( WP_REST_Request $request, array $existing, string $body_hash ): WP_REST_Response {
@@ -863,6 +861,7 @@ class FD_UCP_Checkout_Controller {
             $order->update_meta_data( '_fd_ucp_handler_id', $handler_id );
         }
         $order->update_meta_data( FD_UCP_Ownership::ORDER_META, (string) ( $session['platform_id'] ?? '' ) );
+        $order->update_meta_data( FD_UCP_Ownership::ORDER_SECRET_META, (string) ( $session['session_secret_hash'] ?? '' ) );
 
         foreach ( $settle_result['order_meta'] ?? array() as $meta_key => $meta_value ) {
             $order->update_meta_data( $meta_key, $meta_value );
@@ -885,8 +884,12 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function owned_session( WP_REST_Request $request, ?string $id = null ): array|WP_REST_Response {
+        $presented = FD_UCP_Ownership::presented( $request );
+        if ( '' === $presented ) {
+            return FD_UCP_Ownership::secret_required();
+        }
         $session = $this->load_session( $id ?? (string) $request->get_param( 'id' ) );
-        if ( ! $session || ! FD_UCP_Ownership::owns_row( $session ) ) {
+        if ( ! $session || ! FD_UCP_Ownership::owns( $session, 'session_secret_hash', $presented ) ) {
             return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
         }
 
@@ -1065,6 +1068,18 @@ class FD_UCP_Checkout_Controller {
     // =========================================================================
     // Database
     // =========================================================================
+
+    public function store_session( array $data ): ?string {
+        $issued                      = FD_UCP_Session_Secret::issue();
+        $data['session_secret_hash'] = $issued['hash'];
+        return $this->insert_session( $data ) ? $issued['secret'] : null;
+    }
+
+    public function created_response( string $session_id, string $secret ): WP_REST_Response {
+        $response = new WP_REST_Response( FD_UCP_Formatter::format_checkout_session( $this->load_session( $session_id ), $this->registry ), 201 );
+        $response->header( FD_UCP_Session_Secret::HEADER, $secret );
+        return $response;
+    }
 
     private function insert_session( array $data ): bool {
         global $wpdb;

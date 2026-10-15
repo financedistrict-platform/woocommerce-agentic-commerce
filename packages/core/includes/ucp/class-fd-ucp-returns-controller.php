@@ -115,6 +115,6 @@ class FD_UCP_Returns_Controller {
 	}
 
 	private function resolve_order( WP_REST_Request $request ): WC_Order|WP_REST_Response {
-		return FD_UCP_Order_Controller::resolve( (string) $request->get_param( 'id' ) );
+		return FD_UCP_Order_Controller::resolve( $request );
 	}
 }

@@ -6,6 +6,8 @@ class FD_UCP_Cart_Controller {
 	private const NAMESPACE = 'fd-ucp/v1';
 	private const LIFETIME  = 6 * HOUR_IN_SECONDS;
 
+	public function __construct( private FD_UCP_Checkout_Controller $checkout ) {}
+
 	public function register_routes(): void {
 		register_rest_route( self::NAMESPACE, '/carts', array(
 			'methods'             => 'POST',
@@ -59,21 +61,25 @@ class FD_UCP_Cart_Controller {
 		}
 		$cart_subtotal = FD_UCP_Checkout_Pricing::subtotal_of( $formatted_items );
 
+		$issued = FD_UCP_Session_Secret::issue();
 		$now    = current_time( 'mysql', true );
 		$stored = $this->insert_cart( array(
-			'id'          => $cart_id,
-			'line_items'  => wp_json_encode( $formatted_items ),
-			'platform_id' => FD_UCP_Request_Context::current()->platform_id(),
-			'ucp_version' => FD_UCP_Request_Context::current()->session_pin(),
-			'created_at'  => $now,
-			'updated_at'  => $now,
-			'expires_at'  => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
+			'id'               => $cart_id,
+			'line_items'       => wp_json_encode( $formatted_items ),
+			'platform_id'      => FD_UCP_Request_Context::current()->platform_id(),
+			'cart_secret_hash' => $issued['hash'],
+			'ucp_version'      => FD_UCP_Request_Context::current()->session_pin(),
+			'created_at'       => $now,
+			'updated_at'       => $now,
+			'expires_at'       => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
 		) );
 		if ( ! $stored ) {
 			return FD_UCP_Error::response( 'storage_unavailable', 'The cart could not be stored', 503 );
 		}
 
-		return new WP_REST_Response( $this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ), 201 );
+		$response = new WP_REST_Response( $this->format_cart_response( $cart_id, $formatted_items, $cart_subtotal, $currency ), 201 );
+		$response->header( FD_UCP_Session_Secret::HEADER, $issued['secret'] );
+		return $response;
 	}
 
 	// =========================================================================
@@ -152,44 +158,32 @@ class FD_UCP_Cart_Controller {
 			return FD_UCP_Error::response( $totals->get_error_code(), $totals->get_error_message(), 422 );
 		}
 
-		$currency   = get_woocommerce_currency();
+		if ( 1 !== $this->delete_cart_row( $cart['id'] ) ) {
+			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
+		}
+
 		$session_id = wp_generate_uuid4();
-
-		$now = current_time( 'mysql', true );
-
-		global $wpdb;
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- custom table
-		$stored = $wpdb->insert( "{$wpdb->prefix}fd_ucp_checkout_sessions", array(
-			'id'                => $session_id,
-			'status'            => 'incomplete',
-			'currency'          => $currency,
-			'line_items'        => wp_json_encode( $line_items ),
-			'totals'            => wp_json_encode( $totals ),
-			'buyer'             => null,
-			'fulfillment'       => null,
-			'payment_meta'      => null,
-			'platform_id'       => $cart['platform_id'],
-			'ucp_version'       => FD_UCP_Request_Context::current()->session_pin(),
-			'created_at'        => $now,
-			'updated_at'        => $now,
-			'expires_at'        => gmdate( 'Y-m-d H:i:s', time() + 6 * HOUR_IN_SECONDS ),
+		$now        = current_time( 'mysql', true );
+		$secret     = $this->checkout->store_session( array(
+			'id'           => $session_id,
+			'status'       => 'incomplete',
+			'currency'     => get_woocommerce_currency(),
+			'line_items'   => wp_json_encode( $line_items ),
+			'totals'       => wp_json_encode( $totals ),
+			'buyer'        => null,
+			'fulfillment'  => null,
+			'payment_meta' => null,
+			'platform_id'  => $cart['platform_id'],
+			'ucp_version'  => FD_UCP_Request_Context::current()->session_pin(),
+			'created_at'   => $now,
+			'updated_at'   => $now,
+			'expires_at'   => gmdate( 'Y-m-d H:i:s', time() + self::LIFETIME ),
 		) );
-		if ( false === $stored ) {
+		if ( null === $secret ) {
 			return FD_UCP_Error::response( 'storage_unavailable', 'The checkout session could not be stored', 503 );
 		}
 
-		$this->delete_cart_row( $cart['id'] );
-
-		$checkout_url = home_url( '/wp-json/' . self::NAMESPACE . '/checkout-sessions/' . $session_id );
-
-		return new WP_REST_Response( array(
-			'ucp'          => FD_UCP_Request_Context::current()->wire()->envelope( array( 'cart' ) ),
-			'checkout_session_id' => $session_id,
-			'checkout_url'        => $checkout_url,
-			'line_items'          => $line_items,
-			'totals'              => $totals,
-			'currency'            => $currency,
-		), 201 );
+		return $this->checkout->created_response( $session_id, $secret );
 	}
 
 	// =========================================================================
@@ -226,8 +220,13 @@ class FD_UCP_Cart_Controller {
 	}
 
 	private function owned_cart( WP_REST_Request $request ): array|WP_REST_Response {
+		$presented = FD_UCP_Ownership::presented( $request );
+		if ( '' === $presented ) {
+			return FD_UCP_Ownership::secret_required();
+		}
+
 		$cart = $this->load_cart( (string) $request->get_param( 'id' ) );
-		if ( ! $cart || ! FD_UCP_Ownership::owns_row( $cart ) ) {
+		if ( ! $cart || ! FD_UCP_Ownership::owns( $cart, 'cart_secret_hash', $presented ) ) {
 			return FD_UCP_Error::response( 'cart_not_found', 'Cart not found', 404 );
 		}
 
@@ -271,9 +270,9 @@ class FD_UCP_Cart_Controller {
 		$wpdb->update( "{$wpdb->prefix}fd_ucp_carts", $data, array( 'id' => $id ) );
 	}
 
-	private function delete_cart_row( string $id ): void {
+	private function delete_cart_row( string $id ): int {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- custom table
-		$wpdb->delete( "{$wpdb->prefix}fd_ucp_carts", array( 'id' => $id ) );
+		return (int) $wpdb->delete( "{$wpdb->prefix}fd_ucp_carts", array( 'id' => $id ) );
 	}
 }

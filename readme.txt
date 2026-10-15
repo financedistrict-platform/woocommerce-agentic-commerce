@@ -73,6 +73,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 
 = 0.3.12 =
 * Show net received, buyer cashback, fees and the refundable amount for Prism orders.
+* The database schema moves to 1.6.2: carts and checkout sessions store the hash of their secret. Carts, sessions and orders created before the upgrade have no hash and answer 404 over UCP, including order reads and returns; create new ones. Their WooCommerce orders stay in the admin.
+* Carts, checkout sessions, buyer, promotions, orders and returns require the UCP-Session-Secret header returned when the cart or session was created: 401 session_secret_required without it, 404 with a wrong one. The calling platform no longer decides ownership.
+* POST /carts/{id}/checkout returns the checkout session (same body as POST /checkout-sessions) with a new UCP-Session-Secret header. The checkout_session_id and checkout_url fields are removed.
 
 = 0.3.11 =
 * Back up the database before upgrading. The database schema moves to 1.6 and cannot be downgraded without restoring a backup.
