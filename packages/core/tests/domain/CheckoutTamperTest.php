@@ -50,6 +50,7 @@ final class CheckoutTamperTest extends TestCase {
             public array $inputs      = array();
             public ?Closure $during   = null;
             public ?Throwable $throw = null;
+            public bool $gateway     = false;
 
             public function __construct() {
                 parent::__construct( 'https://gw.example', 'test-key' );
@@ -65,6 +66,10 @@ final class CheckoutTamperTest extends TestCase {
             }
 
             public function settle_payment( array $input ): array {
+                if ( $this->gateway ) {
+                    $this->inputs[] = $input;
+                    return parent::settle_payment( $input );
+                }
                 $this->settled[]     = $input['checkout_meta'][ $this->id() ]['prepared_amount'] ?? null;
                 $this->credentials[] = $input['credential'];
                 $this->inputs[]      = $input;
@@ -2142,6 +2147,90 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'session_complete_in_progress', $response->get_data()['messages'][0]['code'] );
         $this->assertSame( array(), $this->handler->settled );
+    }
+
+    private const SIGNED_PAYER  = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+    private const SIGNED_PAY_TO = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
+
+    private static function signed_requirement(): array {
+        return array(
+            'scheme'  => 'exact',
+            'network' => 'eip155:84532',
+            'asset'   => '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+            'payTo'   => self::SIGNED_PAY_TO,
+            'amount'  => '46950000',
+        );
+    }
+
+    private static function signed_credential(): array {
+        return array(
+            'x402Version'    => 2,
+            'paymentPayload' => array(
+                'x402Version' => 2,
+                'accepted'    => self::signed_requirement(),
+                'payload'     => array(
+                    'signature'     => '0xsig',
+                    'authorization' => array(
+                        'from'        => self::SIGNED_PAYER,
+                        'to'          => self::SIGNED_PAY_TO,
+                        'value'       => '46950000',
+                        'validAfter'  => '0',
+                        'validBefore' => (string) ( time() + 300 ),
+                        'nonce'       => '0x' . str_repeat( '0b', 32 ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    private function signed_pending_session(): array {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $meta = json_decode( $this->db->sessions[ self::SESSION_ID ]['payment_meta'], true );
+        $meta[ $this->handler->id() ]['ucp'] = array( $this->handler->id() => array( array( 'config' => array(
+            'x402Version' => 2,
+            'resource'    => array( 'url' => 'https://store.test/checkout-sessions/' . self::SESSION_ID ),
+            'accepts'     => array( self::signed_requirement() ),
+        ) ) ) );
+        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( $meta );
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $credential = self::signed_credential();
+        $first      = $this->complete( self::PLATFORM, $credential );
+        $this->assertSame( 202, $first->get_status(), json_encode( $first->get_data() ) );
+        return $credential;
+    }
+
+    public static function settle_reply_rows(): array {
+        $rows = array();
+        foreach ( json_decode( file_get_contents( dirname( __DIR__ ) . '/fixtures/prism/settle-replies.json' ), true )['rows'] as $row ) {
+            $rows[ $row['name'] ] = array( $row );
+        }
+        return $rows;
+    }
+
+    #[DataProvider( 'settle_reply_rows' )]
+    public function test_pending_retry_with_the_same_credential_follows_the_shared_table( array $row ): void {
+        $credential = $this->signed_pending_session();
+        FD_Test_WP::$http_response = array(
+            'response' => array( 'code' => $row['http'] ),
+            'body'     => null === $row['body'] ? '' : json_encode( $row['body'] ),
+        );
+        $this->handler->gateway = true;
+
+        $response = $this->complete( self::PLATFORM, $credential );
+
+        $this->assertTrue( $this->handler->inputs[ count( $this->handler->inputs ) - 1 ]['resume'] ?? false );
+        if ( 'pending' === $row['resume'] ) {
+            $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+            $this->assertSame( 'complete_in_progress', $response->get_data()['status'] );
+            $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        } else {
+            $this->assertSame( 'review', $row['resume'] );
+            $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+            $this->assertSame( 'requires_escalation', $response->get_data()['status'] );
+            $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        }
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
     }
 
     private static function one_item(): array {
