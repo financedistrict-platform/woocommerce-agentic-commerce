@@ -8,7 +8,7 @@ class FD_UCP_Status {
     }
 
     public static function closed_as( array $session ): string {
-        return self::is_past_expiry( $session ) ? 'expired' : (string) ( $session['status'] ?? '' );
+        return self::is_past_expiry( $session ) ? 'expired' : self::resolve( $session );
     }
 
     private static function is_past_expiry( array $session ): bool {
@@ -23,7 +23,7 @@ class FD_UCP_Status {
             return $session['status'];
         }
 
-        if ( 'payment_pending' === $session['status'] ) {
+        if ( in_array( $session['status'], array( 'payment_pending', 'complete_in_progress' ), true ) ) {
             return 'complete_in_progress';
         }
 

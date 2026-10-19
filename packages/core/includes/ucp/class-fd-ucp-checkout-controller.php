@@ -419,16 +419,16 @@ class FD_UCP_Checkout_Controller {
             return FD_UCP_Error::session_closed( $session );
         }
 
-        // Guard against settling when the WC order has been cancelled by an admin
-        if ( ! empty( $session['wc_order_id'] ) ) {
-            $existing_order = wc_get_order( (int) $session['wc_order_id'] );
-            if ( $existing_order && $existing_order->get_status() === 'cancelled' ) {
-                $this->update_session_row( $session['id'], array(
-                    'status'     => 'canceled',
-                    'updated_at' => current_time( 'mysql', true ),
-                ) );
-                return FD_UCP_Error::response( 'order_cancelled', 'Order has been cancelled', 409 );
+        $existing_order = ! empty( $session['wc_order_id'] ) ? wc_get_order( (int) $session['wc_order_id'] ) : null;
+        if ( $existing_order && $existing_order->get_status() === 'cancelled' ) {
+            if ( $resumable ) {
+                return $this->escalate_cancelled_order( $existing_order, $session );
             }
+            $this->update_session_row( $session['id'], array(
+                'status'     => 'canceled',
+                'updated_at' => current_time( 'mysql', true ),
+            ) );
+            return FD_UCP_Error::response( 'order_cancelled', 'Order has been cancelled', 409 );
         }
 
         $body    = $request->get_json_params();
@@ -522,7 +522,7 @@ class FD_UCP_Checkout_Controller {
         if ( ! $order || ! hash_equals( (string) $order->get_meta( self::PENDING_CREDENTIAL_META ), self::credential_fingerprint( $credential ) ) ) {
             return FD_UCP_Error::response( 'payment_pending_mismatch', 'A payment is awaiting confirmation for this checkout, retry with the same payment credential', 409 );
         }
-        if ( ! $order->needs_payment() ) {
+        if ( ! in_array( $order->get_status(), array( 'pending', 'on-hold' ), true ) ) {
             return FD_UCP_Error::response( 'order_not_payable', 'The order for this checkout no longer accepts payment', 409 );
         }
 
@@ -605,6 +605,7 @@ class FD_UCP_Checkout_Controller {
             $reason,
             gmdate( 'Y-m-d H:i:s' )
         ) );
+        $order->update_status( 'on-hold' );
         $this->update_session_row( $session['id'], array(
             'status'      => 'payment_pending',
             'wc_order_id' => $order->get_id(),
@@ -614,7 +615,11 @@ class FD_UCP_Checkout_Controller {
         $session['wc_order_id'] = $order->get_id();
 
         return new WP_REST_Response(
-            FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+            self::with_message(
+                FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+                'settlement_pending',
+                'Payment is being settled. Call complete again with the same payment credential'
+            ),
             202
         );
     }
@@ -629,10 +634,42 @@ class FD_UCP_Checkout_Controller {
         $session['status']      = 'requires_escalation';
         $session['wc_order_id'] = $order->get_id();
 
+        return $this->review_response( $session );
+    }
+
+    private function escalate_cancelled_order( WC_Order $order, array $session ): WP_REST_Response {
+        $order->add_order_note( sprintf(
+            'The order was cancelled while its payment was awaiting confirmation. The checkout is held for review at %s UTC; check the payment before refunding or restoring the order.',
+            gmdate( 'Y-m-d H:i:s' )
+        ) );
+        $this->update_session_row( $session['id'], array(
+            'status'     => 'requires_escalation',
+            'updated_at' => current_time( 'mysql', true ),
+        ) );
+        $session['status'] = 'requires_escalation';
+
+        return $this->review_response( $session );
+    }
+
+    private function review_response( array $session ): WP_REST_Response {
         return new WP_REST_Response(
-            FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+            self::with_message(
+                FD_UCP_Formatter::format_checkout_session( $session, $this->registry ),
+                'payment_requires_review',
+                'Payment needs merchant review before the order can be fulfilled'
+            ),
             200
         );
+    }
+
+    private static function with_message( array $body, string $code, string $content ): array {
+        $body['messages']   = $body['messages'] ?? array();
+        $body['messages'][] = array(
+            'type'    => 'info',
+            'code'    => $code,
+            'content' => $content,
+        );
+        return $body;
     }
 
     private static function settle_window_elapsed( array $session ): bool {
@@ -665,19 +702,24 @@ class FD_UCP_Checkout_Controller {
             return $session;
         }
 
-        if ( 'completed' === $session['status'] ) {
-            return FD_UCP_Error::response( 'session_completed', 'Cannot cancel a completed session', 409 );
+        return FD_UCP_Session_Lock::run(
+            $session['id'],
+            'settlement_in_progress',
+            'Another settlement attempt is in progress',
+            fn() => $this->do_cancel_session( $request, $session['id'] )
+        );
+    }
+
+    private function do_cancel_session( WP_REST_Request $request, string $session_id ): WP_REST_Response {
+        $session = $this->owned_session( $request, $session_id );
+        if ( $session instanceof WP_REST_Response ) {
+            return $session;
         }
 
-        if ( 'canceled' === $session['status'] ) {
-            return FD_UCP_Error::response( 'session_canceled', 'Session is already canceled', 409 );
+        if ( ! FD_UCP_Status::is_mutable( $session ) ) {
+            return FD_UCP_Error::session_closed( $session );
         }
 
-        if ( 'payment_pending' === $session['status'] ) {
-            return FD_UCP_Error::response( 'session_payment_pending', 'A payment is awaiting confirmation for this checkout', 409 );
-        }
-
-        // Cancel the pending WC order if one exists
         if ( ! empty( $session['wc_order_id'] ) ) {
             $wc_order = wc_get_order( (int) $session['wc_order_id'] );
             if ( $wc_order && $wc_order->get_status() === 'pending' ) {
