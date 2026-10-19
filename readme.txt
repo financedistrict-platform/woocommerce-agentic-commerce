@@ -77,7 +77,7 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 * Carts, checkout sessions, buyer, promotions, orders and returns require the UCP-Session-Secret header returned when the cart or session was created: 401 session_secret_required without it, 404 with a wrong one. The calling platform no longer decides ownership.
 * POST /carts/{id}/checkout returns the checkout session (same body as POST /checkout-sessions) with a new UCP-Session-Secret header. The checkout_session_id and checkout_url fields are removed.
 * A payment whose outcome is not confirmed yet puts the order on hold: WooCommerce sends the buyer its on-hold email and may reduce stock. Retry with the same payment credential settles it or sends it to review. Settle replies follow one reason table shared by all FD plugins; HTTP 409 from the gateway is now pending.
-* Cancel waits for a running settlement and works only on an open session. A refused cancel answers 409 with a code from the UCP status, for example session_complete_in_progress (was session_payment_pending).
+* Cancel is refused with 409 settlement_in_progress while a settlement runs, and works only on an open session. A refused cancel answers 409 with a code from the UCP status, for example session_complete_in_progress (was session_payment_pending).
 
 = 0.3.11 =
 * Back up the database before upgrading. The database schema moves to 1.6 and cannot be downgraded without restoring a backup.
