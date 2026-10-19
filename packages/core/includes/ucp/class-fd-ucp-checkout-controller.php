@@ -844,7 +844,7 @@ class FD_UCP_Checkout_Controller {
                 $shipping_item = new WC_Order_Item_Shipping();
                 $shipping_item->set_method_title( $option['title'] ?? 'Shipping' );
                 $shipping_item->set_method_id( $selected_id );
-                $shipping_item->set_total( FD_UCP_Checkout_Pricing::total_of( $option['totals'] ?? array() ) / 100 );
+                $shipping_item->set_total( FD_UCP_Currency::to_major( FD_UCP_Checkout_Pricing::total_of( $option['totals'] ?? array() ), (string) $order->get_currency() ) );
                 $order->add_item( $shipping_item );
                 break;
             }
@@ -977,7 +977,7 @@ class FD_UCP_Checkout_Controller {
                 $first_rate_id = $rate_id;
             }
 
-            $cost = FD_UCP_Formatter::to_minor( (float) $rate->get_cost() );
+            $cost = FD_UCP_Currency::to_minor( (float) $rate->get_cost(), get_woocommerce_currency() );
             if ( $cost < 0 ) {
                 return new WP_Error( 'invalid_fulfillment', 'Shipping rate cannot be priced' );
             }

@@ -70,6 +70,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-ownership.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-address.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-status.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-currency.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-formatter.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-discovery.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-catalog-controller.php';

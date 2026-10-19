@@ -242,6 +242,7 @@ require_once $core . '/ucp/wire/class-fd-ucp-wire-20260408.php';
 require_once $core . '/ucp/wire/class-fd-ucp-wire-20260123.php';
 require_once $core . '/ucp/class-fd-ucp-version-registry.php';
 require_once $core . '/ucp/class-fd-ucp-request-context.php';
+require_once $core . '/ucp/class-fd-ucp-currency.php';
 require_once $base . '/prism/class-fd-prism-client.php';
 require_once $base . '/prism/class-fd-prism-settlement-summary.php';
 require_once $base . '/prism/class-fd-prism-handler.php';

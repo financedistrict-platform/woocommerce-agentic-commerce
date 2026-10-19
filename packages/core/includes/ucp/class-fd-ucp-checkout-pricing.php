@@ -63,7 +63,7 @@ final class FD_UCP_Checkout_Pricing {
                 return new WP_Error( 'out_of_stock', "Product $product_id does not have enough stock" );
             }
 
-            $price = self::payable_minor( (float) $product->get_price() );
+            $price = self::payable_minor( (float) $product->get_price(), get_woocommerce_currency() );
             if ( null === $price ) {
                 return new WP_Error( 'invalid_total', "Product $product_id has a price the checkout cannot quote" );
             }
@@ -93,11 +93,12 @@ final class FD_UCP_Checkout_Pricing {
     }
 
     public static function order_totals( WC_Order $order ): array|WP_Error {
-        $subtotal = self::payable_minor( (float) $order->get_subtotal() );
-        $shipping = self::payable_minor( (float) $order->get_shipping_total() );
-        $tax      = self::payable_minor( (float) $order->get_total_tax() );
-        $discount = self::payable_minor( (float) $order->get_total_discount() );
-        $total    = self::payable_minor( (float) $order->get_total() );
+        $currency = (string) $order->get_currency();
+        $subtotal = self::payable_minor( (float) $order->get_subtotal(), $currency );
+        $shipping = self::payable_minor( (float) $order->get_shipping_total(), $currency );
+        $tax      = self::payable_minor( (float) $order->get_total_tax(), $currency );
+        $discount = self::payable_minor( (float) $order->get_total_discount(), $currency );
+        $total    = self::payable_minor( (float) $order->get_total(), $currency );
         if ( null === $subtotal || null === $shipping || null === $tax || null === $discount || null === $total ) {
             return new WP_Error( 'invalid_total', 'Order total is outside the payable range' );
         }
@@ -127,22 +128,22 @@ final class FD_UCP_Checkout_Pricing {
     public static function coupon_discount_minor( WC_Order $order, string $code ): ?int {
         foreach ( $order->get_items( 'coupon' ) as $item ) {
             if ( strtolower( $item->get_code() ) === strtolower( $code ) ) {
-                return self::payable_minor( (float) $item->get_discount() );
+                return self::payable_minor( (float) $item->get_discount(), (string) $order->get_currency() );
             }
         }
         return null;
     }
 
     public static function order_total_minor( WC_Order $order ): ?int {
-        return self::payable_minor( (float) $order->get_total() );
+        return self::payable_minor( (float) $order->get_total(), (string) $order->get_currency() );
     }
 
-    private static function payable_minor( float $amount ): ?int {
-        if ( ! is_finite( $amount ) || $amount < 0 || $amount > self::MAX_AMOUNT_MINOR / 100 ) {
+    private static function payable_minor( float $amount, string $currency ): ?int {
+        if ( ! is_finite( $amount ) || $amount < 0 || $amount > self::MAX_AMOUNT_MINOR / FD_UCP_Currency::factor( $currency ) ) {
             return null;
         }
 
-        return FD_UCP_Formatter::to_minor( $amount );
+        return FD_UCP_Currency::to_minor( $amount, $currency );
     }
 
     public static function subtotal_of( array $line_items ): int {

@@ -197,7 +197,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
             return null;
         }
 
-        $amount_major = FD_Prism_Client::minor_to_major_string( $total );
+        $amount_major = FD_UCP_Currency::to_major_string( $total, $currency );
         $order_label  = $input['order_label'] ?? 'Checkout';
 
         $result = $this->client->prepare_payment_requirements(
