@@ -1010,6 +1010,14 @@ final class FD_Test_Wpdb {
     }
 
     public function get_row( string $query, $output = null ) {
+        if ( preg_match( '/wc_order_id = (\d+)/', $query, $order ) ) {
+            foreach ( $this->sessions as $row ) {
+                if ( (string) ( $row['wc_order_id'] ?? '' ) === $order[1] ) {
+                    return $row;
+                }
+            }
+            return null;
+        }
         $platform = preg_match( "/platform_id = '([^']*)'/", $query, $m ) ? $m[1] : null;
         foreach ( $this->rows( $query ) as $row ) {
             if ( null !== $platform && ( $row['platform_id'] ?? null ) !== $platform ) {
