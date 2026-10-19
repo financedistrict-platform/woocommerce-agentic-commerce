@@ -625,7 +625,8 @@ class FD_UCP_Checkout_Controller {
     }
 
     private function hold_for_review( WC_Order $order, array $session, string $reason ): WP_REST_Response {
-        $order->update_status( 'on-hold', "Payment held for review. $reason" );
+        $order->add_order_note( "Payment held for review. $reason" );
+        $order->update_status( 'on-hold' );
         $this->update_session_row( $session['id'], array(
             'status'      => 'requires_escalation',
             'wc_order_id' => $order->get_id(),

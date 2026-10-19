@@ -2338,6 +2338,8 @@ final class CheckoutTamperTest extends TestCase {
             $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
             $this->assertSame( 'requires_escalation', $response->get_data()['status'] );
             $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+            $this->assertSame( 'on-hold', $this->order()->get_status() );
+            $this->assertStringStartsWith( 'Payment held for review.', (string) end( $this->order()->notes ) );
         }
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
     }
