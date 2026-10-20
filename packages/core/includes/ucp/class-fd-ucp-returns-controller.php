@@ -95,7 +95,7 @@ class FD_UCP_Returns_Controller {
 		foreach ( $order->get_refunds() as $refund ) {
 			$refunds[] = array(
 				'id'         => (string) $refund->get_id(),
-				'amount'     => FD_UCP_Formatter::to_minor( (float) $refund->get_amount() ),
+				'amount'     => FD_UCP_Currency::to_minor( (float) $refund->get_amount(), (string) $order->get_currency() ),
 				'reason'     => $refund->get_reason(),
 				'status'     => 'completed',
 				'created_at' => $refund->get_date_created()->format( 'c' ),

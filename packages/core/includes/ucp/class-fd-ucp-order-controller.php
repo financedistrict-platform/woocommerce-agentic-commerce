@@ -38,6 +38,21 @@ class FD_UCP_Order_Controller {
             return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
         }
 
-        return $order;
+        $session = self::session_of( $order );
+        if ( null === $session ) {
+            return FD_UCP_Error::response( 'order_not_found', 'Order not found', 404 );
+        }
+
+        $pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
+        return null !== $pin ? $pin : $order;
+    }
+
+    private static function session_of( WC_Order $order ): ?array {
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare( "SELECT id, ucp_version FROM {$wpdb->prefix}fd_ucp_checkout_sessions WHERE wc_order_id = %d ORDER BY created_at DESC LIMIT 1", $order->get_id() ),
+            ARRAY_A
+        );
+        return is_array( $row ) ? $row : null;
     }
 }

@@ -90,6 +90,7 @@ final class CheckoutTamperTest extends TestCase {
         FD_Test_WC::$rates               = array();
         FD_Test_WC::$tax_rate            = 0.0;
         FD_Test_WC::$included_rate       = 0.0;
+        FD_Test_WC::$currency            = 'EUR';
     }
 
     private function controller(): FD_UCP_Checkout_Controller {
@@ -1321,6 +1322,23 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( array( 4695 ), $this->handler->settled );
+    }
+
+    public function test_zero_decimal_currency_settles_without_an_amount_mismatch(): void {
+        FD_Test_WC::$currency            = 'JPY';
+        FD_Test_Product_Store::$products = array(
+            101 => new FD_Test_Product( 101, '1800' ),
+            205 => new FD_Test_Product( 205, '600' ),
+        );
+        $this->db->sessions[ self::SESSION_ID ]['currency'] = 'JPY';
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+
+        $response = $this->complete();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'completed', $response->get_data()['status'] );
+        $this->assertSame( 4695, FD_UCP_Checkout_Pricing::order_total_minor( $this->order() ) );
+        $this->assertSame( '4695.00', $this->order()->get_total() );
     }
 
     public function test_update_requotes_when_the_stored_quote_is_older_than_its_lifetime(): void {

@@ -112,6 +112,7 @@ require_once $base . '/ucp/class-fd-ucp-platform-auth.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
 require_once $base . '/ucp/class-fd-ucp-session-secret.php';
 require_once $base . '/ucp/class-fd-ucp-ownership.php';
+require_once $base . '/ucp/class-fd-ucp-currency.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';
 require_once $base . '/ucp/class-fd-ucp-cart-controller.php';

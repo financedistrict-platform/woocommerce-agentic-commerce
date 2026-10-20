@@ -113,8 +113,4 @@ class FD_Prism_Client {
 
         return $decoded;
     }
-
-    public static function minor_to_major_string( int $minor_units ): string {
-        return number_format( $minor_units / 100, 2, '.', '' );
-    }
 }

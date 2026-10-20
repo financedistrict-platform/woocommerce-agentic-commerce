@@ -589,4 +589,25 @@ final class PrismHandlerTest extends TestCase {
 
         $this->assertSame( $expected, $actual );
     }
+
+    public static function prepared_amounts(): array {
+        return array(
+            'euro' => array( 'EUR', 1000, '10.00' ),
+            'yen'  => array( 'JPY', 1500, '1500' ),
+            'dinar' => array( 'KWD', 1234, '1.234' ),
+        );
+    }
+
+    #[DataProvider( 'prepared_amounts' )]
+    public function test_prepare_sends_the_major_amount_in_the_checkout_currency( string $currency, int $total, string $amount ): void {
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::for_version( '2026-08-25' ) );
+        $GLOBALS['fd_test_transients'][ FD_Prism_Handler::cache_key( self::GW, '2026-08-25' ) ] = self::contract();
+        $GLOBALS['fd_test_http_response'] = array( 'body' => self::X402_BODY, 'response' => array( 'code' => 200 ) );
+
+        ( new FD_Prism_Handler( self::GW, 'key' ) )->prepare_checkout_payment( array( 'total' => $total, 'currency' => $currency ) + self::prepare_input() );
+
+        $body = json_decode( $GLOBALS['fd_test_requests'][0]['args']['body'], true );
+        $this->assertSame( $amount, $body['amount'] );
+        $this->assertSame( $currency, $body['currency'] );
+    }
 }

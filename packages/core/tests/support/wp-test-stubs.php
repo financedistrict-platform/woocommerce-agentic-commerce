@@ -536,6 +536,7 @@ final class FD_Test_WC {
     public static array $rates          = array();
     public static float $tax_rate       = 0.0;
     public static float $included_rate  = 0.0;
+    public static string $currency      = 'EUR';
     public $session;
     public $customer;
 
@@ -569,7 +570,7 @@ function sanitize_email( string $email ): string {
 }
 
 function get_woocommerce_currency(): string {
-    return 'EUR';
+    return FD_Test_WC::$currency;
 }
 
 function wp_generate_uuid4(): string {
@@ -674,6 +675,7 @@ class WC_Order {
     public array $items  = array();
     public string $total = '0.00';
     public string $status = 'pending';
+    public string $currency = '';
     public float $subtotal = 0.0;
     public float $shipping = 0.0;
     public float $tax      = 0.0;
@@ -711,6 +713,10 @@ class WC_Order {
 
     public function get_status(): string {
         return $this->status;
+    }
+
+    public function get_currency(): string {
+        return '' !== $this->currency ? $this->currency : get_woocommerce_currency();
     }
 
     public function get_meta( string $key ) {
@@ -1010,6 +1016,14 @@ final class FD_Test_Wpdb {
     }
 
     public function get_row( string $query, $output = null ) {
+        if ( preg_match( '/wc_order_id = (\d+)/', $query, $order ) ) {
+            foreach ( $this->sessions as $row ) {
+                if ( (string) ( $row['wc_order_id'] ?? '' ) === $order[1] ) {
+                    return $row;
+                }
+            }
+            return null;
+        }
         $platform = preg_match( "/platform_id = '([^']*)'/", $query, $m ) ? $m[1] : null;
         foreach ( $this->rows( $query ) as $row ) {
             if ( null !== $platform && ( $row['platform_id'] ?? null ) !== $platform ) {
