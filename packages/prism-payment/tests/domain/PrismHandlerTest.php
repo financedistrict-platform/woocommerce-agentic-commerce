@@ -1,6 +1,7 @@
 <?php
 declare( strict_types=1 );
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class PrismHandlerTest extends TestCase {
@@ -524,5 +525,68 @@ final class PrismHandlerTest extends TestCase {
         ) );
 
         $this->assertSame( $payer, $result['order_meta']['_fd_prism_payer'] );
+    }
+
+    private static function settle_replies(): array {
+        return json_decode( file_get_contents( dirname( __DIR__, 3 ) . '/core/tests/fixtures/prism/settle-replies.json' ), true );
+    }
+
+    public static function settle_reply_rows(): array {
+        $rows = array();
+        foreach ( self::settle_replies()['rows'] as $row ) {
+            $rows[ $row['name'] ] = array( $row );
+        }
+        return $rows;
+    }
+
+    #[DataProvider( 'settle_reply_rows' )]
+    public function test_first_settle_attempt_classifies_each_gateway_reply_like_the_shared_table( array $row ): void {
+        $payer       = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+        $requirement = self::requirement( '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd', '100010' );
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => $row['http'] ),
+            'body'     => null === $row['body'] ? '' : json_encode( $row['body'] ),
+        );
+
+        $result = $this->handler()->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::settle_credential( $requirement, array( 'from' => $payer, 'to' => $requirement['payTo'] ) ),
+            'checkout_meta' => self::settle_meta( $requirement ),
+        ) );
+
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+        $this->assertFalse( $result['success'], json_encode( $result ) );
+        if ( 'pending' === $row['first'] ) {
+            $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+            $this->assertArrayNotHasKey( 'review', $result );
+        } elseif ( 'review' === $row['first'] ) {
+            $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+            $this->assertArrayNotHasKey( 'pending', $result );
+        } else {
+            $this->assertSame( 'declined', $row['first'] );
+            $this->assertArrayNotHasKey( 'pending', $result, json_encode( $result ) );
+            $this->assertArrayNotHasKey( 'review', $result, json_encode( $result ) );
+        }
+    }
+
+    public static function reason_lists(): array {
+        return array(
+            'declined reasons'      => array( 'PRE_BROADCAST_REASONS', 'declinedReasons' ),
+            'declined prefixes'     => array( 'PRE_BROADCAST_PREFIXES', 'declinedPrefixes' ),
+            'pending reasons'       => array( 'UNANSWERED_REASONS', 'pendingReasons' ),
+            'review reasons'        => array( 'REVIEW_REASONS', 'reviewReasons' ),
+            'http pending statuses' => array( 'HTTP_PENDING_STATUSES', 'httpPendingStatuses' ),
+        );
+    }
+
+    #[DataProvider( 'reason_lists' )]
+    public function test_handler_reason_list_equals_the_shared_table( string $constant, string $key ): void {
+        $this->assertTrue( ( new ReflectionClass( FD_Prism_Handler::class ) )->hasConstant( $constant ), $constant );
+        $actual   = ( new ReflectionClassConstant( FD_Prism_Handler::class, $constant ) )->getValue();
+        $expected = self::settle_replies()[ $key ];
+        sort( $actual );
+        sort( $expected );
+
+        $this->assertSame( $expected, $actual );
     }
 }

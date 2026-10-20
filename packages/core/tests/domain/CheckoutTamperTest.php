@@ -50,6 +50,7 @@ final class CheckoutTamperTest extends TestCase {
             public array $inputs      = array();
             public ?Closure $during   = null;
             public ?Throwable $throw = null;
+            public bool $gateway     = false;
 
             public function __construct() {
                 parent::__construct( 'https://gw.example', 'test-key' );
@@ -65,6 +66,10 @@ final class CheckoutTamperTest extends TestCase {
             }
 
             public function settle_payment( array $input ): array {
+                if ( $this->gateway ) {
+                    $this->inputs[] = $input;
+                    return parent::settle_payment( $input );
+                }
                 $this->settled[]     = $input['checkout_meta'][ $this->id() ]['prepared_amount'] ?? null;
                 $this->credentials[] = $input['credential'];
                 $this->inputs[]      = $input;
@@ -405,6 +410,61 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'settlement_in_progress', $response->get_data()['messages'][0]['code'] );
         $this->assertGreaterThanOrEqual( 0, $this->call_index( "GET_LOCK('" . self::lock_name() . "'" ) );
+    }
+
+    private function cancel(): WP_REST_Response {
+        return $this->controller()->cancel_session( self::request(
+            '/fd-ucp/v1/checkout-sessions/' . self::SESSION_ID . '/cancel',
+            self::PLATFORM,
+            array( 'id' => self::SESSION_ID )
+        ) );
+    }
+
+    public function test_cancel_is_refused_while_the_session_is_locked(): void {
+        $this->db->held = array( self::lock_name() );
+
+        $response = $this->cancel();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'settlement_in_progress', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( -1, $this->call_index( 'update' ) );
+        $this->assertSame( 'incomplete', $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public static function closed_cancel_states(): array {
+        return array(
+            'payment pending'      => array( 'payment_pending', 3600, 'session_complete_in_progress', 'payment_pending' ),
+            'complete in progress' => array( 'complete_in_progress', 3600, 'session_complete_in_progress', 'complete_in_progress' ),
+            'requires escalation'  => array( 'requires_escalation', 3600, 'session_requires_escalation', 'requires_escalation' ),
+            'completed'            => array( 'completed', 3600, 'session_completed', 'completed' ),
+            'canceled'             => array( 'canceled', 3600, 'session_canceled', 'canceled' ),
+            'expired'              => array( 'incomplete', -3600, 'session_expired', 'expired' ),
+        );
+    }
+
+    #[DataProvider( 'closed_cancel_states' )]
+    public function test_cancel_refuses_a_session_that_is_not_open_with_its_ucp_status( string $status, int $expires_in, string $code, string $stored ): void {
+        $this->db->sessions[ self::SESSION_ID ]['status']     = $status;
+        $this->db->sessions[ self::SESSION_ID ]['expires_at'] = gmdate( 'Y-m-d H:i:s', time() + $expires_in );
+
+        $response = $this->cancel();
+
+        $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( $code, $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), array_filter( $this->db->updates, static fn( array $u ): bool => 'canceled' === ( $u[1]['status'] ?? null ) ) );
+        $this->assertSame( $stored, $this->db->sessions[ self::SESSION_ID ]['status'] );
+    }
+
+    public function test_cancel_writes_inside_the_session_lock(): void {
+        $response = $this->cancel();
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'canceled', $response->get_data()['status'] );
+        $this->assertSame( 'canceled', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $lock = $this->call_index( "GET_LOCK('" . self::lock_name() . "'" );
+        $this->assertGreaterThanOrEqual( 0, $lock );
+        $this->assertLessThan( $this->call_index( 'update' ), $lock );
+        $this->assertGreaterThan( $this->call_index( 'update' ), $this->call_index( "RELEASE_LOCK('" . self::lock_name() . "'" ) );
     }
 
     public function test_zero_value_cart_is_rejected_as_invalid_total(): void {
@@ -1882,9 +1942,8 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'complete_in_progress', $response->get_data()['status'] );
         $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
-        $this->assertSame( 'pending', $this->order()->get_status() );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
         $this->assertNotContains( 'payment_complete', $this->order()->calls );
-        $this->assertNotContains( 'update_status', $this->order()->calls );
     }
 
     public function test_held_pending_session_leaves_an_order_note_with_reason_and_time(): void {
@@ -1896,7 +1955,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertCount( 1, $this->order()->notes );
         $this->assertStringContainsString( 'receipt_timeout', $this->order()->notes[0] );
         $this->assertMatchesRegularExpression( '/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/', $this->order()->notes[0] );
-        $this->assertSame( 'pending', $this->order()->get_status() );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
     public function test_answered_unconfirmed_outcome_on_the_first_attempt_stays_pending(): void {
@@ -1917,7 +1976,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
-        $this->assertSame( 'pending', $this->order()->get_status() );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
     public function test_definite_rejection_still_resets_the_session(): void {
@@ -1978,7 +2037,7 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 409, $cancel->get_status(), json_encode( $cancel->get_data() ) );
         $this->assertSame( 409, $update->get_status(), json_encode( $update->get_data() ) );
         $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
-        $this->assertSame( 'pending', $this->order()->get_status() );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
     public function test_pending_session_is_reported_as_in_progress_on_read(): void {
@@ -2056,7 +2115,7 @@ final class CheckoutTamperTest extends TestCase {
 
         $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
-        $this->assertSame( 'pending', $this->order()->get_status() );
+        $this->assertSame( 'on-hold', $this->order()->get_status() );
     }
 
     private function interrupted_session( int $age_seconds ): void {
@@ -2142,6 +2201,147 @@ final class CheckoutTamperTest extends TestCase {
         $this->assertSame( 409, $response->get_status(), json_encode( $response->get_data() ) );
         $this->assertSame( 'session_complete_in_progress', $response->get_data()['messages'][0]['code'] );
         $this->assertSame( array(), $this->handler->settled );
+    }
+
+    private static function message_codes( WP_REST_Response $response ): array {
+        return array_column( $response->get_data()['messages'] ?? array(), 'code' );
+    }
+
+    public function test_admin_cancelled_order_of_a_pending_session_goes_to_review_and_stays_cancelled(): void {
+        $this->pending_session();
+        $this->order()->status = 'cancelled';
+        $this->order()->calls  = array();
+        $notes                 = count( $this->order()->notes );
+        $this->handler->result = $this->settled_result();
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'requires_escalation', $response->get_data()['status'] );
+        $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        $this->assertSame( 'cancelled', $this->order()->get_status() );
+        $this->assertNotContains( 'update_status', $this->order()->calls );
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
+        $this->assertCount( $notes + 1, $this->order()->notes );
+        $this->assertSame( array(), $this->handler->settled );
+    }
+
+    public function test_pending_session_with_an_on_hold_order_settles_on_retry(): void {
+        $this->pending_session();
+        $this->order()->status = 'on-hold';
+        $this->handler->result = $this->settled_result();
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( 'completed', $response->get_data()['status'] );
+        $this->assertCount( 1, array_keys( $this->order()->calls, 'payment_complete', true ) );
+    }
+
+    public function test_pending_answer_carries_the_settlement_pending_message(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertContains( 'settlement_pending', self::message_codes( $response ) );
+    }
+
+    public function test_review_answer_carries_the_payment_requires_review_message(): void {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $this->handler->result = array( 'success' => false, 'review' => true, 'error' => 'authorization_consumed' );
+
+        $response = $this->complete( self::PLATFORM, self::CREDENTIAL_A );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertContains( 'payment_requires_review', self::message_codes( $response ) );
+    }
+
+    private const SIGNED_PAYER  = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+    private const SIGNED_PAY_TO = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
+
+    private static function signed_requirement(): array {
+        return array(
+            'scheme'  => 'exact',
+            'network' => 'eip155:84532',
+            'asset'   => '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+            'payTo'   => self::SIGNED_PAY_TO,
+            'amount'  => '46950000',
+        );
+    }
+
+    private static function signed_credential(): array {
+        return array(
+            'x402Version'    => 2,
+            'paymentPayload' => array(
+                'x402Version' => 2,
+                'accepted'    => self::signed_requirement(),
+                'payload'     => array(
+                    'signature'     => '0xsig',
+                    'authorization' => array(
+                        'from'        => self::SIGNED_PAYER,
+                        'to'          => self::SIGNED_PAY_TO,
+                        'value'       => '46950000',
+                        'validAfter'  => '0',
+                        'validBefore' => (string) ( time() + 300 ),
+                        'nonce'       => '0x' . str_repeat( '0b', 32 ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    private function signed_pending_session(): array {
+        $this->quoted_session( 4695, 4695, self::untaxed_totals() );
+        $meta = json_decode( $this->db->sessions[ self::SESSION_ID ]['payment_meta'], true );
+        $meta[ $this->handler->id() ]['ucp'] = array( $this->handler->id() => array( array( 'config' => array(
+            'x402Version' => 2,
+            'resource'    => array( 'url' => 'https://store.test/checkout-sessions/' . self::SESSION_ID ),
+            'accepts'     => array( self::signed_requirement() ),
+        ) ) ) );
+        $this->db->sessions[ self::SESSION_ID ]['payment_meta'] = json_encode( $meta );
+        $this->handler->result = array( 'success' => false, 'pending' => true, 'error' => 'Settlement outcome is not confirmed yet' );
+
+        $credential = self::signed_credential();
+        $first      = $this->complete( self::PLATFORM, $credential );
+        $this->assertSame( 202, $first->get_status(), json_encode( $first->get_data() ) );
+        return $credential;
+    }
+
+    public static function settle_reply_rows(): array {
+        $rows = array();
+        foreach ( json_decode( file_get_contents( dirname( __DIR__ ) . '/fixtures/prism/settle-replies.json' ), true )['rows'] as $row ) {
+            $rows[ $row['name'] ] = array( $row );
+        }
+        return $rows;
+    }
+
+    #[DataProvider( 'settle_reply_rows' )]
+    public function test_pending_retry_with_the_same_credential_follows_the_shared_table( array $row ): void {
+        $credential = $this->signed_pending_session();
+        FD_Test_WP::$http_response = array(
+            'response' => array( 'code' => $row['http'] ),
+            'body'     => null === $row['body'] ? '' : json_encode( $row['body'] ),
+        );
+        $this->handler->gateway = true;
+
+        $response = $this->complete( self::PLATFORM, $credential );
+
+        $this->assertTrue( $this->handler->inputs[ count( $this->handler->inputs ) - 1 ]['resume'] ?? false );
+        if ( 'pending' === $row['resume'] ) {
+            $this->assertSame( 202, $response->get_status(), json_encode( $response->get_data() ) );
+            $this->assertSame( 'complete_in_progress', $response->get_data()['status'] );
+            $this->assertSame( 'payment_pending', $this->db->sessions[ self::SESSION_ID ]['status'] );
+        } else {
+            $this->assertSame( 'review', $row['resume'] );
+            $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+            $this->assertSame( 'requires_escalation', $response->get_data()['status'] );
+            $this->assertSame( 'requires_escalation', $this->db->sessions[ self::SESSION_ID ]['status'] );
+            $this->assertSame( 'on-hold', $this->order()->get_status() );
+            $this->assertStringStartsWith( 'Payment held for review.', (string) end( $this->order()->notes ) );
+        }
+        $this->assertNotContains( 'payment_complete', $this->order()->calls );
     }
 
     private static function one_item(): array {

@@ -9,8 +9,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
     private const STALE_PREFIX      = '_fd_prism_discovery_stale_';
     private const CACHE_TTL         = 300;
     private const INSTRUMENT_TYPES  = array( 'x402', 'tokenized', 'default' );
-    private const REVIEW_REASONS    = array( 'authorization_consumed', 'settlement_unresolved' );
-    private const UNANSWERED_REASONS = array( 'settlement_pending', 'unexpected_settle_error' );
+    private const REVIEW_REASONS    = array( 'authorization_consumed', 'checkout_already_settled', 'settlement_unresolved' );
+    private const UNANSWERED_REASONS = array( 'checkout_settlement_in_progress', 'settlement_pending', 'unexpected_settle_error' );
+    private const HTTP_PENDING_STATUSES = array( 408, 409, 429 );
     private const REASON_NOTE_LENGTH = 200;
     private const PRE_BROADCAST_REASONS = array(
         'authorization_mismatch',
@@ -45,6 +46,9 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
         'unauthorized',
         'invalid_authorization_recipient',
         'invalid_authorization_format',
+        'quote_not_found',
+        'quote_mismatch',
+        'credential_already_used',
     );
     private const PRE_BROADCAST_PREFIXES = array( 'unknown_network:', 'unknown_token:', 'missing_variant_config:' );
 
@@ -328,7 +332,7 @@ class FD_Prism_Handler implements FD_Payment_Handler, FD_Versioned_Payment_Handl
 
     private function no_answer_reason( array $response ): ?string {
         $status = $response['status'];
-        if ( $status >= 400 && $status < 500 && ! in_array( $status, array( 408, 429 ), true ) ) {
+        if ( $status >= 400 && $status < 500 && ! in_array( $status, self::HTTP_PENDING_STATUSES, true ) ) {
             return null;
         }
         if ( 0 === $status ) {
