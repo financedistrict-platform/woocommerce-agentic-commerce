@@ -3,9 +3,18 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 UCP_API="$BASE_URL/wp-json/fd-ucp/v1"
+UCP_PROFILE="${UCP_PROFILE:-https://fd.xyz/.well-known/ucp}"
+UCP_API_KEY="${UCP_API_KEY:-}"
+
+ucp_curl() {
+  curl -H "UCP-Agent: profile=\"$UCP_PROFILE\"" -H "X-API-Key: $UCP_API_KEY" "$@"
+}
+
 PRODUCT_ID="${1:-42}"
 PASS=0
 FAIL=0
+HDR=$(mktemp)
+trap 'rm -f "$HDR"' EXIT
 
 pass() { echo "  ✓ $1"; PASS=$((PASS + 1)); }
 fail() { echo "  ✗ $1: $2"; FAIL=$((FAIL + 1)); }
@@ -34,9 +43,9 @@ echo "  Product: $PRODUCT_ID"
 echo "========================================"
 echo ""
 
-# ── 1. Discovery: dummy handler present ─────────────────
+# ── 1. Discovery: dummy handler is never advertised ─────
 
-echo "1. Discovery — dummy handler"
+echo "1. Discovery — dummy handler hidden"
 
 DISCOVERY=$(curl -sL "$BASE_URL/.well-known/ucp")
 
@@ -44,47 +53,9 @@ FOUND=$(echo "$DISCOVERY" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 handlers = d.get('ucp', {}).get('payment_handlers', {})
-print('$HANDLER_NS' if '$HANDLER_NS' in handlers else '')
+print('listed' if '$HANDLER_NS' in handlers else 'hidden')
 " 2>/dev/null)
-assert_eq "dummy handler registered" "$HANDLER_NS" "$FOUND"
-
-HANDLER_TYPE=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-h = d['ucp']['payment_handlers']['$HANDLER_NS'][0]
-print(h.get('id', ''))
-" 2>/dev/null)
-assert_eq "handler id is dummy" "dummy" "$HANDLER_TYPE"
-
-HANDLER_NAME=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-h = d['ucp']['payment_handlers']['$HANDLER_NS'][0]
-print(h.get('name', ''))
-" 2>/dev/null)
-assert_eq "handler name matches namespace" "$HANDLER_NS" "$HANDLER_NAME"
-
-echo ""
-
-# ── 2. Discovery: accepts config ────────────────────────
-
-echo "2. Discovery — accepts config"
-
-DISC_NETWORK=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-a = d['ucp']['payment_handlers']['$HANDLER_NS'][0]['config']['accepts'][0]
-print(a['network'])
-" 2>/dev/null)
-assert_eq "discovery network is dummy:testnet" "dummy:testnet" "$DISC_NETWORK"
-
-DISC_ASSET=$(echo "$DISCOVERY" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-a = d['ucp']['payment_handlers']['$HANDLER_NS'][0]['config']['accepts'][0]
-print(a['asset'])
-" 2>/dev/null)
-assert_eq "discovery asset is DUMMY" "DUMMY" "$DISC_ASSET"
+assert_eq "dummy handler not in discovery" "hidden" "$FOUND"
 
 echo ""
 
@@ -92,12 +63,15 @@ echo ""
 
 echo "3. Checkout — payment requirements"
 
-SESSION=$(curl -s -X POST "$UCP_API/checkout-sessions" \
+SESSION=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
 
 SESSION_ID=$(echo "$SESSION" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 assert_not_empty "checkout session created" "$SESSION_ID"
+
+SESSION_SECRET=$(tr -d '' < "$HDR" | awk -F': ' 'tolower($1)=="ucp-session-secret"{print $2}' | tail -1)
+assert_not_empty "checkout session returns a session secret" "$SESSION_SECRET"
 
 CHECKOUT_ACCEPTS=$(echo "$SESSION" | python3 -c "
 import sys, json
@@ -140,7 +114,7 @@ echo ""
 
 echo "5. Amount recalculation on update"
 
-UPDATED=$(curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID" \
+UPDATED=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID"   -H "UCP-Session-Secret: $SESSION_SECRET" \n\
   -H "Content-Type: application/json" \
   -d "{
     \"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 3}],
@@ -175,7 +149,7 @@ echo ""
 
 echo "6. Complete — dummy settlement"
 
-COMPLETED=$(curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete" \
+COMPLETED=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/complete"   -H "UCP-Session-Secret: $SESSION_SECRET" \n\
   -H "Content-Type: application/json" \
   -d "{
     \"payment\": {
@@ -199,6 +173,13 @@ assert_eq "order network is dummy:testnet" "dummy:testnet" "$ORDER_NETWORK"
 
 ORDER_ID=$(echo "$COMPLETED" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['id'])" 2>/dev/null)
 assert_not_empty "WooCommerce order created" "$ORDER_ID"
+assert_eq "order id is the opaque order key" "wc_order_" "${ORDER_ID:0:9}"
+
+ORDER_GET=$(ucp_curl -s -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/orders/$ORDER_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+assert_eq "order is retrievable by its id" "$ORDER_ID" "$ORDER_GET"
+
+ORDER_LIST_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders")
+assert_eq "orders cannot be listed" "404" "$ORDER_LIST_STATUS"
 
 echo ""
 

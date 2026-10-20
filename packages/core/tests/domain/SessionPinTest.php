@@ -87,4 +87,89 @@ final class SessionPinTest extends TestCase {
 
         $resolver->setValue( $plugin, null );
     }
+
+    private const ORDER_KEY = 'wc_order_Zk3q9XvT1aBcD';
+    private const AGENT     = 'https://agent.example/p';
+
+    private function order_route_world( string $declared, ?string $pinned, bool $with_session = true ): FD_Test_Fixture_Profile_Fetcher {
+        $order       = new WC_Order();
+        $order->meta = array(
+            '_fd_ucp_handler_id'          => 'xyz.fd.prism_payment',
+            '_fd_ucp_session_secret_hash' => FD_Test_Session_Secret::hash(),
+        );
+        FD_Test_Order_Store::$orders = array( 1001 => $order );
+
+        $db = new FD_Test_Wpdb();
+        if ( $with_session ) {
+            $db->sessions['s1'] = array( 'id' => 's1', 'status' => 'completed', 'wc_order_id' => '1001', 'ucp_version' => $pinned, 'platform_id' => 'https://platform.example/.well-known/ucp' );
+        }
+        $GLOBALS['wpdb'] = $db;
+
+        $fetcher = new FD_Test_Fixture_Profile_Fetcher( array( self::AGENT => FD_Test_Fixture_Profile_Fetcher::declaring( $declared ) ) );
+        ( new ReflectionProperty( FD_UCP_Plugin::class, 'resolver' ) )->setValue( FD_UCP_Plugin::instance(), new FD_UCP_Version_Resolver( new FD_UCP_Version_Registry(), $fetcher ) );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::current()->with_platform( 'https://platform.example/.well-known/ucp' ) );
+        return $fetcher;
+    }
+
+    private static function order_request( string $secret = FD_Test_Session_Secret::SECRET ): WP_REST_Request {
+        return new WP_REST_Request(
+            '/fd-ucp/v1/orders/' . self::ORDER_KEY,
+            array( 'UCP-Session-Secret' => $secret, 'UCP-Agent' => 'profile="' . self::AGENT . '"' ),
+            array( 'id' => self::ORDER_KEY )
+        );
+    }
+
+    protected function tearDown(): void {
+        ( new ReflectionProperty( FD_UCP_Plugin::class, 'resolver' ) )->setValue( FD_UCP_Plugin::instance(), null );
+        FD_UCP_Request_Context::set( null );
+    }
+
+    public function test_order_route_rejects_a_pin_mismatch_like_the_session_routes(): void {
+        $this->order_route_world( '2026-04-08', '2026-08-25' );
+        $expected = FD_UCP_Plugin::instance()->pin_session( self::order_request(), '2026-08-25' );
+        $this->order_route_world( '2026-04-08', '2026-08-25' );
+
+        $order   = ( new FD_UCP_Order_Controller() )->get_order( self::order_request() );
+        $returns = ( new FD_UCP_Returns_Controller() )->list_returns( self::order_request() );
+
+        $this->assertNotNull( $expected );
+        foreach ( array( 'order' => $order, 'returns' => $returns ) as $name => $response ) {
+            $this->assertSame( $expected->get_status(), $response->get_status(), $name );
+            $this->assertSame( $expected->get_data(), $response->get_data(), $name );
+        }
+        $this->assertSame( 'version_unsupported', $order->get_data()['messages'][0]['code'] ?? $order->get_data()['code'] ?? null );
+    }
+
+    public function test_order_route_serves_the_pinned_version_when_the_agent_matches(): void {
+        $this->order_route_world( '2026-08-25', '2026-08-25' );
+
+        $response = ( new FD_UCP_Order_Controller() )->get_order( self::order_request() );
+
+        $this->assertSame( 200, $response->get_status(), json_encode( $response->get_data() ) );
+        $this->assertSame( '2026-08-25', FD_UCP_Request_Context::current()->version() );
+    }
+
+    public function test_order_route_checks_platform_and_secret_before_the_pin(): void {
+        $this->order_route_world( '2026-04-08', '2026-08-25' );
+        FD_UCP_Request_Context::set( FD_UCP_Request_Context::current()->with_platform( '' ) );
+
+        $this->assertInstanceOf( WP_Error::class, FD_UCP_Plugin::require_platform() );
+
+        $fetcher  = $this->order_route_world( '2026-04-08', '2026-08-25' );
+        $response = ( new FD_UCP_Order_Controller() )->get_order( self::order_request( 'wrong-secret' ) );
+
+        $this->assertSame( 404, $response->get_status() );
+        $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $fetcher->requested );
+    }
+
+    public function test_order_without_a_session_row_is_not_found(): void {
+        $fetcher = $this->order_route_world( '2026-08-25', '2026-08-25', false );
+
+        $response = ( new FD_UCP_Order_Controller() )->get_order( self::order_request() );
+
+        $this->assertSame( 404, $response->get_status() );
+        $this->assertSame( 'order_not_found', $response->get_data()['messages'][0]['code'] );
+        $this->assertSame( array(), $fetcher->requested );
+    }
 }

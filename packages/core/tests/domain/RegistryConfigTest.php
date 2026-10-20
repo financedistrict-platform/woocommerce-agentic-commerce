@@ -83,6 +83,7 @@ final class RegistryConfigTest extends TestCase {
 
     public function test_disabled_version_request_is_rejected_by_the_route_gate(): void {
         FD_Test_WP::$options[ FD_UCP_Version_Registry::OPTION_SUPPORTED ] = array();
+        FD_Test_Platform_Vectors::register( 'agent-key', 'https://agent.example/p' );
         $plugin   = FD_UCP_Plugin::instance();
         $resolver = new ReflectionProperty( FD_UCP_Plugin::class, 'resolver' );
         $resolver->setValue( $plugin, new FD_UCP_Version_Resolver(
@@ -90,7 +91,7 @@ final class RegistryConfigTest extends TestCase {
             new FD_Test_Fixture_Profile_Fetcher( array( 'https://agent.example/p' => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-04-08' ) ) )
         ) );
 
-        $response = $plugin->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/checkout-sessions', array( 'UCP-Agent' => 'profile="https://agent.example/p"' ) ) );
+        $response = $plugin->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/checkout-sessions', array( 'UCP-Agent' => 'profile="https://agent.example/p"', 'X-API-Key' => 'agent-key' ) ) );
         $resolver->setValue( $plugin, null );
 
         $this->assertSame( 422, $response->get_status() );
@@ -98,6 +99,7 @@ final class RegistryConfigTest extends TestCase {
     }
 
     public function test_cart_routes_are_not_available_in_2026_01_23(): void {
+        FD_Test_Platform_Vectors::register( 'agent-key', 'https://agent.example/p' );
         $plugin   = FD_UCP_Plugin::instance();
         $resolver = new ReflectionProperty( FD_UCP_Plugin::class, 'resolver' );
         $resolver->setValue( $plugin, new FD_UCP_Version_Resolver(
@@ -105,7 +107,7 @@ final class RegistryConfigTest extends TestCase {
             new FD_Test_Fixture_Profile_Fetcher( array( 'https://agent.example/p' => FD_Test_Fixture_Profile_Fetcher::declaring( '2026-01-23' ) ) )
         ) );
 
-        $response = $plugin->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/carts', array( 'UCP-Agent' => 'profile="https://agent.example/p"' ) ) );
+        $response = $plugin->gate_request( null, null, new WP_REST_Request( '/fd-ucp/v1/carts', array( 'UCP-Agent' => 'profile="https://agent.example/p"', 'X-API-Key' => 'agent-key' ) ) );
         $resolver->setValue( $plugin, null );
 
         $this->assertSame( 404, $response->get_status() );

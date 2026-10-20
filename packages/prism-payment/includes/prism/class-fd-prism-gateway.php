@@ -67,14 +67,17 @@ class FD_Prism_Gateway extends WC_Payment_Gateway {
         );
     }
 
-    /**
-     * No-op — settlement happens via UCP checkout-sessions/complete, not WC checkout.
-     */
+    public function is_available(): bool {
+        return false;
+    }
+
     public function process_payment( $order_id ): array {
-        return array(
-            'result'   => 'success',
-            'redirect' => '',
+        wc_add_notice(
+            __( 'Prism Stablecoin cannot be paid for at the store checkout. Please choose another payment method.', 'fd-prism-for-woocommerce' ),
+            'error'
         );
+
+        return array( 'result' => 'failure' );
     }
 
     public function api_url(): string {

@@ -3,7 +3,7 @@
  * Plugin Name: Finance District UCP
  * Plugin URI: https://developers.fd.xyz
  * Description: Universal Commerce Protocol (UCP) endpoints for WooCommerce. Makes your store discoverable and purchasable by AI agents. Payment handlers are registered by separate plugins.
- * Version: 0.3.9
+ * Version: 0.3.12
  * Author: Finance District (1st Digital)
  * Author URI: https://fd.xyz
  * Requires at least: 6.4
@@ -18,10 +18,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FD_UCP_VERSION', '0.3.9' );
+define( 'FD_UCP_VERSION', '0.3.12' );
 define( 'FD_UCP_PLUGIN_FILE', __FILE__ );
 define( 'FD_UCP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
-define( 'FD_UCP_DB_VERSION', '1.2.0' );
+define( 'FD_UCP_DB_VERSION', '1.6.2' );
 
 require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-registry.php';
 require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-installer.php';
@@ -54,6 +54,7 @@ function fd_ucp_init() {
 
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/interface-fd-payment-handler.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/interface-fd-versioned-payment-handler.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/payment/class-fd-payment-claims.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/payment/class-fd-payment-registry.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/interface-fd-ucp-wire-format.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/wire/class-fd-ucp-wire-base.php';
@@ -63,12 +64,19 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-request-context.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-agent-profile-fetcher.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-version-resolver.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-platform-auth.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-error.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-session-secret.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-ownership.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-address.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-status.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-currency.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-formatter.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-discovery.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-catalog-controller.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-session-lock.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-checkout-pricing.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-coupon-rules.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-checkout-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-order-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-returns-controller.php';
@@ -77,6 +85,7 @@ function fd_ucp_init() {
     require_once FD_UCP_PLUGIN_DIR . 'includes/ucp/class-fd-ucp-cart-controller.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-rate-limiter.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/class-fd-ucp-plugin.php';
+    require_once FD_UCP_PLUGIN_DIR . 'includes/admin/class-fd-ucp-key-vault.php';
     require_once FD_UCP_PLUGIN_DIR . 'includes/admin/class-fd-ucp-settings.php';
 
     FD_UCP_Plugin::instance();

@@ -4,7 +4,7 @@ Tags: woocommerce, ai, agents, commerce, stablecoin, payments, ucp
 Requires at least: 6.4
 Tested up to: 6.8
 Requires PHP: 8.1
-Stable tag: 0.3.9
+Stable tag: 0.3.12
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -20,6 +20,7 @@ Finance District UCP turns any WooCommerce store into an AI-agent-ready storefro
 * Exposes a full catalog search and product lookup API
 * Provides a structured checkout flow: create, update, complete, and cancel sessions
 * Supports order tracking, returns, promotions, and buyer identity
+* Identifies every calling AI platform by request signature or a key you issue under WooCommerce > Settings > Advanced > UCP versions; choose Open (default), Authenticated or Registered only, and block a platform by disabling its keys; carts, checkouts and orders are visible only to the platform that created them; orders are addressed by an opaque id and cannot be listed
 * Integrates with Finance District Prism for stablecoin settlement (USDC, FDUSD)
 
 **How it works:**
@@ -34,7 +35,7 @@ Finance District UCP turns any WooCommerce store into an AI-agent-ready storefro
 
 * **Core (fd-woocommerce-ucp)** — UCP protocol endpoints, checkout flow, catalog API
 * **Prism Payment (fd-woocommerce-prism)** — Stablecoin payment handler via Finance District Prism
-* **Dummy Payment (fd-woocommerce-dummy-payment)** — Test payment handler for development
+* **Dummy Payment (fd-woocommerce-dummy-payment)** — Test payment handler for local development only. Available from a git checkout, not shipped in release packages, and never active on a production site
 
 == Installation ==
 
@@ -69,6 +70,28 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 2. Prism gateway settings in WooCommerce
 
 == Changelog ==
+
+= 0.3.12 =
+* Show net received, buyer cashback, fees and the refundable amount for Prism orders.
+* The database schema moves to 1.6.2: carts and checkout sessions store the hash of their secret. Carts, sessions and orders created before the upgrade have no hash and answer 404 over UCP, including order reads and returns; create new ones. Their WooCommerce orders stay in the admin.
+* Carts, checkout sessions, buyer, promotions, orders and returns require the UCP-Session-Secret header returned when the cart or session was created: 401 session_secret_required without it, 404 with a wrong one. The calling platform no longer decides ownership.
+* POST /carts/{id}/checkout returns the checkout session (same body as POST /checkout-sessions) with a new UCP-Session-Secret header. The checkout_session_id and checkout_url fields are removed.
+* A payment whose outcome is not confirmed yet puts the order on hold: WooCommerce sends the buyer its on-hold email and may reduce stock. Retry with the same payment credential settles it or sends it to review. Settle replies follow one reason table shared by all FD plugins; HTTP 409 from the gateway is now pending.
+* Cancel is refused with 409 settlement_in_progress while a settlement runs, and works only on an open session. A refused cancel answers 409 with a code from the UCP status, for example session_complete_in_progress (was session_payment_pending).
+* Order reads and returns apply the UCP version the checkout session was pinned to, like the checkout routes.
+* Amounts use the decimals of the currency (ISO 4217): JPY and other zero-decimal currencies are no longer multiplied by 100, and KWD and other three-decimal currencies use 1000. On those stores every amount on the wire changes to the correct value, and the Prism quote amount is sent with the same number of decimals.
+
+= 0.3.11 =
+* Back up the database before upgrading. The database schema moves to 1.6 and cannot be downgraded without restoring a backup.
+* Every UCP route except catalog identifies the calling platform by request signature or a key you issue. The new Platform access setting (Open by default, Authenticated, Registered only) decides what a request without a credential gets. Platform keys can be viewed again with the Show checkbox. Carts, checkout sessions and orders are visible only to the platform that created them.
+* Order ids on the wire are opaque order keys, and listing orders is removed.
+* A payment held for merchant review answers HTTP 200 with status requires_escalation.
+* Discount totals are negative for UCP 2026-04-08 and later.
+* Prism settles only against the stored payment requirements and accepts a settlement only when its success flag, transaction, network, payer and amount match. A mismatch puts the order on hold. Each signed payment and transaction can be used for one checkout session only.
+* Dummy payment runs only on a development site that sets FD_DUMMY_PAYMENT_ENABLED to true.
+
+= 0.3.10 =
+* Prism handler discovery calls the public GET /ucp/<ucp-version>/handlers route. Needs Prism with that route.
 
 = 0.3.9 =
 * Prism checkout uses Prism's protocol-agnostic payment-requirements endpoint. The checkout handler id and version now always match the store's UCP discovery for the same UCP version. Needs Prism with POST /api/v2/merchant/payment-requirements.
@@ -121,6 +144,9 @@ UCP is an open protocol that lets AI agents interact with online stores in a sta
 * Credential validation before settlement
 
 == Upgrade Notices ==
+
+= 0.3.11 =
+Back up the database first. The schema moves to 1.6 and cannot be downgraded without a backup. Update the UCP and Prism plugins together.
 
 = 0.3.2 =
 Update the UCP and Prism plugins together.

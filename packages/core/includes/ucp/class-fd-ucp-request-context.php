@@ -20,6 +20,7 @@ final class FD_UCP_Request_Context {
     private string $outcome;
     private ?string $declared;
     private ?array $rejection;
+    private string $platform_id = '';
 
     public function __construct( FD_UCP_Version_Registry $versions, string $version, string $outcome = self::OUTCOME_NONE, ?string $declared = null, ?array $rejection = null ) {
         $this->versions  = $versions;
@@ -43,6 +44,16 @@ final class FD_UCP_Request_Context {
 
     public static function for_version( string $version, ?FD_UCP_Version_Registry $versions = null ): self {
         return new self( $versions ?? new FD_UCP_Version_Registry( $version, array() ), $version );
+    }
+
+    public function with_platform( string $platform_id ): self {
+        $copy              = clone $this;
+        $copy->platform_id = $platform_id;
+        return $copy;
+    }
+
+    public function platform_id(): string {
+        return $this->platform_id;
     }
 
     public function version(): string {

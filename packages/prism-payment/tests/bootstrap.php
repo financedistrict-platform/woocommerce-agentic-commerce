@@ -103,6 +103,123 @@ if ( ! function_exists( 'wc_get_logger' ) ) {
     }
 }
 
+if ( ! function_exists( '__' ) ) {
+    function __( string $text, string $domain = 'default' ): string {
+        return $text;
+    }
+}
+
+if ( ! function_exists( 'get_bloginfo' ) ) {
+    function get_bloginfo( string $show = '' ): string {
+        return 'Test Store';
+    }
+}
+
+if ( ! function_exists( 'add_action' ) ) {
+    function add_action( string $tag, $callback, int $priority = 10, int $accepted_args = 1 ): bool {
+        $GLOBALS['fd_test_actions'][ $tag ][] = $callback;
+        return true;
+    }
+}
+
+if ( ! function_exists( 'wc_add_notice' ) ) {
+    function wc_add_notice( string $message, string $type = 'success' ): void {
+        $GLOBALS['fd_test_notices'][] = array( 'message' => $message, 'type' => $type );
+    }
+}
+
+if ( ! class_exists( 'WC_Payment_Gateway' ) ) {
+    abstract class WC_Payment_Gateway {
+        public $id                 = '';
+        public $has_fields         = false;
+        public $method_title       = '';
+        public $method_description = '';
+        public $supports           = array();
+        public $form_fields        = array();
+        public $title              = '';
+        public $description        = '';
+        public $enabled            = 'yes';
+        protected $settings        = array();
+
+        public function init_settings(): void {
+            $this->settings = $GLOBALS['fd_test_options'][ 'woocommerce_' . $this->id . '_settings' ] ?? array();
+        }
+
+        public function get_option( $key, $empty_value = null ) {
+            return $this->settings[ $key ] ?? ( $this->form_fields[ $key ]['default'] ?? $empty_value );
+        }
+
+        public function is_available() {
+            return 'yes' === $this->enabled;
+        }
+
+        public function process_admin_options() {
+        }
+    }
+}
+
+if ( ! function_exists( 'current_time' ) ) {
+    function current_time( string $type, $gmt = 0 ): string {
+        return '2026-04-20 10:07:00';
+    }
+}
+
+if ( ! class_exists( 'FD_Test_Claims_Wpdb' ) ) {
+    final class FD_Test_Claims_Wpdb {
+        public string $prefix = 'wp_';
+        public array $claims  = array();
+        public bool $broken   = false;
+
+        public function prepare( string $query, ...$args ): string {
+            return vsprintf( str_replace( '%s', "'%s'", $query ), $args );
+        }
+
+        public string $last_error = '';
+
+        public function query( string $query ): int|false {
+            if ( $this->broken ) {
+                $this->last_error = 'store unavailable';
+                return false;
+            }
+            preg_match( "/VALUES \('([0-9a-f]+)', '[^']*', '([^']*)'/", $query, $m );
+            if ( isset( $this->claims[ $m[1] ] ) ) {
+                return 0;
+            }
+            $this->claims[ $m[1] ] = $m[2];
+            return 1;
+        }
+
+        public function get_var( string $query ) {
+            preg_match( "/claim_key = '([0-9a-f]+)'/", $query, $m );
+            return $this->broken ? null : ( $this->claims[ $m[1] ?? '' ] ?? null );
+        }
+    }
+}
+
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+    function wp_strip_all_tags( string $str ): string {
+        return preg_replace( '/<[^>]*>/', '', $str );
+    }
+}
+
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+    function sanitize_text_field( string $str ): string {
+        return trim( wp_strip_all_tags( $str ) );
+    }
+}
+
+if ( ! class_exists( 'WC_Order' ) ) {
+    class WC_Order {
+        public array $meta = array();
+        public array $notes = array();
+        public function get_meta( string $k ) { return $this->meta[ $k ] ?? ''; }
+        public function update_meta_data( string $k, $v ): void { $this->meta[ $k ] = $v; }
+        public function save_meta_data(): void {}
+        public function save(): void {}
+        public function add_order_note( string $n ): void { $this->notes[] = $n; }
+    }
+}
+
 if ( ! defined( 'FD_PRISM_VERSION' ) ) {
     preg_match( "/define\( 'FD_PRISM_VERSION', '([^']+)' \)/", file_get_contents( dirname( __DIR__ ) . '/fd-woocommerce-prism.php' ), $fd_prism_version );
     define( 'FD_PRISM_VERSION', $fd_prism_version[1] );
@@ -113,8 +230,10 @@ $base = dirname( __DIR__ ) . '/includes';
 $core = dirname( __DIR__, 2 ) . '/core/includes';
 
 require_once $base . '/prism/class-fd-prism-validator.php';
+require_once $base . '/prism/class-fd-prism-tokens.php';
 require_once $core . '/payment/interface-fd-payment-handler.php';
 require_once $core . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $core . '/payment/class-fd-payment-claims.php';
 require_once $core . '/payment/class-fd-payment-registry.php';
 require_once $core . '/ucp/interface-fd-ucp-wire-format.php';
 require_once $core . '/ucp/wire/class-fd-ucp-wire-base.php';
@@ -123,5 +242,8 @@ require_once $core . '/ucp/wire/class-fd-ucp-wire-20260408.php';
 require_once $core . '/ucp/wire/class-fd-ucp-wire-20260123.php';
 require_once $core . '/ucp/class-fd-ucp-version-registry.php';
 require_once $core . '/ucp/class-fd-ucp-request-context.php';
+require_once $core . '/ucp/class-fd-ucp-currency.php';
 require_once $base . '/prism/class-fd-prism-client.php';
+require_once $base . '/prism/class-fd-prism-settlement-summary.php';
 require_once $base . '/prism/class-fd-prism-handler.php';
+require_once $base . '/prism/class-fd-prism-gateway.php';

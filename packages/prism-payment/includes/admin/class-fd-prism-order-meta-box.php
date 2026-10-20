@@ -113,11 +113,26 @@ class FD_Prism_Order_Meta_Box {
         // Amount (atomic)
         $amount = $order->get_meta( '_fd_prism_amount' );
         if ( $amount ) {
-            $asset  = $order->get_meta( '_fd_prism_asset' );
-            $symbol = self::asset_symbol( $asset );
-            $decimal = number_format( (int) $amount / 1_000_000, 6, '.', '' );
+            $label = FD_Prism_Tokens::amount_label( (string) $amount, (string) $order->get_meta( '_fd_prism_asset' ) );
             echo '<dt>' . esc_html__( 'Settlement Amount', 'fd-prism-for-woocommerce' ) . '</dt>';
-            echo '<dd>' . esc_html( $decimal ) . ' ' . esc_html( $symbol ) . '</dd>';
+            echo '<dd>' . esc_html( $label ) . '</dd>';
+        }
+
+        $summary = FD_Prism_Settlement_Summary::from_gateway()?->for_order( $order );
+        if ( $summary ) {
+            $rows = array(
+                __( 'Net received', 'fd-prism-for-woocommerce' )   => $summary['net'] . ' ' . $summary['asset'],
+                __( 'Buyer cashback', 'fd-prism-for-woocommerce' ) => $summary['cashback'] . ' ' . $summary['asset'],
+                __( 'Fees', 'fd-prism-for-woocommerce' )           => $summary['fee'] . ' ' . $summary['asset'],
+                __( 'Refundable', 'fd-prism-for-woocommerce' )     => 'up to ' . $summary['net'] . ' ' . $summary['asset'],
+            );
+            foreach ( $rows as $row_label => $row_value ) {
+                echo '<dt>' . esc_html( $row_label ) . '</dt>';
+                echo '<dd>' . esc_html( $row_value ) . '</dd>';
+            }
+        } else {
+            echo '<dt>' . esc_html__( 'Refundable', 'fd-prism-for-woocommerce' ) . '</dt>';
+            echo '<dd>' . esc_html__( 'Unavailable. Check the Prism portal.', 'fd-prism-for-woocommerce' ) . '</dd>';
         }
 
         echo '</dl>';
@@ -131,19 +146,6 @@ class FD_Prism_Order_Meta_Box {
             }
         }
         return 'shop_order';
-    }
-
-    private static function asset_symbol( string $asset ): string {
-        $known = array(
-            '0x036cbd53842c5426634e7929541ec2318f3dcf7e' => 'USDC',
-            '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' => 'USDC',
-            '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' => 'USDC',
-            '0xaf88d065e77c8cc2239327c5edb3a432268e5831' => 'USDC',
-            '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359' => 'USDC',
-            '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d' => 'USDC',
-            '0xab27f55db008704ed8098f0dfbcf5e1aa387b9d9' => 'FDUSD',
-        );
-        return $known[ strtolower( $asset ) ] ?? ( $asset ?: 'USDC' );
     }
 
     private static function resolve_order( $post_or_order ): ?WC_Order {

@@ -50,10 +50,19 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
     class WP_REST_Response {
         public $data;
         public int $status;
+        public array $headers = array();
 
         public function __construct( $data = null, int $status = 200 ) {
             $this->data   = $data ?? array();
             $this->status = $status;
+        }
+
+        public function header( string $key, string $value ): void {
+            $this->headers[ $key ] = $value;
+        }
+
+        public function get_headers(): array {
+            return $this->headers;
         }
 
         public function get_data() {
@@ -67,6 +76,7 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
 }
 
 require_once __DIR__ . '/support/wp-test-stubs.php';
+require_once __DIR__ . '/support/session-secret-fixture.php';
 require_once __DIR__ . '/golden/capture-stubs.php';
 
 if ( ! defined( 'FD_UCP_VERSION' ) ) {
@@ -87,6 +97,7 @@ require_once $base . '/ucp/class-fd-ucp-address.php';
 require_once $base . '/ucp/class-fd-ucp-status.php';
 require_once $base . '/payment/interface-fd-payment-handler.php';
 require_once $base . '/payment/interface-fd-versioned-payment-handler.php';
+require_once $base . '/payment/class-fd-payment-claims.php';
 require_once $base . '/payment/class-fd-payment-registry.php';
 require_once $base . '/ucp/interface-fd-ucp-wire-format.php';
 require_once $base . '/ucp/wire/class-fd-ucp-wire-base.php';
@@ -97,13 +108,26 @@ require_once $base . '/ucp/class-fd-ucp-version-registry.php';
 require_once $base . '/ucp/class-fd-ucp-request-context.php';
 require_once $base . '/ucp/class-fd-ucp-agent-profile-fetcher.php';
 require_once $base . '/ucp/class-fd-ucp-version-resolver.php';
+require_once $base . '/ucp/class-fd-ucp-platform-auth.php';
 require_once $base . '/ucp/class-fd-ucp-error.php';
+require_once $base . '/ucp/class-fd-ucp-session-secret.php';
+require_once $base . '/ucp/class-fd-ucp-ownership.php';
+require_once $base . '/ucp/class-fd-ucp-currency.php';
 require_once $base . '/ucp/class-fd-ucp-formatter.php';
 require_once $base . '/ucp/class-fd-ucp-discovery.php';
 require_once $base . '/ucp/class-fd-ucp-cart-controller.php';
 require_once $base . '/class-fd-rate-limiter.php';
+require_once $base . '/ucp/class-fd-ucp-session-lock.php';
+require_once $base . '/ucp/class-fd-ucp-checkout-pricing.php';
+require_once $base . '/ucp/class-fd-ucp-coupon-rules.php';
+require_once $base . '/ucp/class-fd-ucp-catalog-controller.php';
 require_once $base . '/ucp/class-fd-ucp-checkout-controller.php';
+require_once $base . '/ucp/class-fd-ucp-order-controller.php';
+require_once $base . '/ucp/class-fd-ucp-returns-controller.php';
+require_once $base . '/ucp/class-fd-ucp-buyer-identity-controller.php';
+require_once $base . '/ucp/class-fd-ucp-promotions-controller.php';
 require_once $base . '/class-fd-ucp-plugin.php';
+require_once $base . '/admin/class-fd-ucp-key-vault.php';
 require_once $base . '/admin/class-fd-ucp-settings.php';
 
 $prism = dirname( __DIR__, 2 ) . '/prism-payment';
@@ -115,5 +139,9 @@ require_once $prism . '/includes/prism/class-fd-prism-client.php';
 require_once $prism . '/includes/prism/class-fd-prism-validator.php';
 require_once $prism . '/includes/prism/class-fd-prism-handler.php';
 
+require_once dirname( __DIR__, 2 ) . '/dummy-payment/fd-woocommerce-dummy-payment.php';
+
 require_once __DIR__ . '/support/golden-renderer.php';
 require_once __DIR__ . '/support/fixture-profile-fetcher.php';
+require_once __DIR__ . '/support/platform-vectors.php';
+require_once __DIR__ . '/support/without-openssl.php';

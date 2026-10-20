@@ -3,6 +3,8 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_Payment_Registry {
 
+    public const QUOTE_TTL = 900;
+
     private const ALIASES = array( 'x402' => 'xyz.fd.prism_payment' );
 
     /** @var FD_Payment_Handler[] */
@@ -40,9 +42,27 @@ class FD_Payment_Registry {
     public function prepare_all( array $input ): array {
         $results = array();
         foreach ( $this->handlers as $handler ) {
-            $results[ $handler->id() ] = $handler->prepare_checkout_payment( $input );
+            $prepared = $handler->prepare_checkout_payment( $input );
+            if ( is_array( $prepared ) ) {
+                $prepared['prepared_at'] ??= time();
+            }
+            $results[ $handler->id() ] = $prepared;
         }
         return $results;
+    }
+
+    public static function quote_is_fresh( mixed $handler_meta ): bool {
+        $prepared_at = is_array( $handler_meta ) ? ( $handler_meta['prepared_at'] ?? null ) : null;
+        return is_int( $prepared_at ) && time() - $prepared_at <= self::QUOTE_TTL;
+    }
+
+    public function without_stale_quotes( array $payment_meta ): array {
+        foreach ( $this->handlers as $id => $handler ) {
+            if ( is_array( $payment_meta[ $id ] ?? null ) && ! self::quote_is_fresh( $payment_meta[ $id ] ) ) {
+                unset( $payment_meta[ $id ] );
+            }
+        }
+        return $payment_meta;
     }
 
     /**

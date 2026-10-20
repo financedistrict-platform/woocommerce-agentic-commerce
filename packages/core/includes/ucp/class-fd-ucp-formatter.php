@@ -5,10 +5,6 @@ class FD_UCP_Formatter {
 
     public const UCP_VERSION = FD_UCP_Version_Registry::DEFAULT_CURRENT;
 
-    public static function to_minor( float $amount ): int {
-        return (int) round( $amount * 100 );
-    }
-
     public static function format_profile( string $endpoint_base_url, FD_Payment_Registry $registry ): array {
         $context = FD_UCP_Request_Context::current();
         return $context->wire()->profile( $endpoint_base_url, $registry, $context->supported_versions_map() );
@@ -92,6 +88,7 @@ class FD_UCP_Formatter {
      * Format a WC order for UCP order response.
      */
     public static function format_order( WC_Order $order ): array {
+        $currency   = (string) $order->get_currency();
         $line_items = array();
         foreach ( $order->get_items() as $item ) {
             $line_items[] = array(
@@ -99,7 +96,7 @@ class FD_UCP_Formatter {
                 'item'     => array(
                     'id'    => (string) $item->get_product_id(),
                     'title' => $item->get_name(),
-                    'price' => self::to_minor( (float) ( $item->get_total() / max( 1, $item->get_quantity() ) ) ),
+                    'price' => FD_UCP_Currency::to_minor( (float) ( $item->get_total() / max( 1, $item->get_quantity() ) ), $currency ),
                 ),
                 'quantity' => array(
                     'original'  => $item->get_quantity(),
@@ -107,8 +104,8 @@ class FD_UCP_Formatter {
                     'fulfilled' => 0,
                 ),
                 'totals'   => array(
-                    array( 'type' => 'subtotal', 'amount' => self::to_minor( (float) $item->get_subtotal() ) ),
-                    array( 'type' => 'total', 'amount' => self::to_minor( (float) $item->get_total() ) ),
+                    array( 'type' => 'subtotal', 'amount' => FD_UCP_Currency::to_minor( (float) $item->get_subtotal(), $currency ) ),
+                    array( 'type' => 'total', 'amount' => FD_UCP_Currency::to_minor( (float) $item->get_total(), $currency ) ),
                 ),
             );
         }
@@ -127,16 +124,16 @@ class FD_UCP_Formatter {
                 'version' => FD_UCP_Request_Context::current()->version(),
                 'status'  => 'success',
             ),
-            'id'         => (string) $order->get_id(),
+            'id'         => $order->get_order_key(),
             'label'      => $order->get_order_number(),
             'status'     => self::wc_order_status_to_ucp( $order->get_status() ),
-            'currency'   => $order->get_currency(),
+            'currency'   => $currency,
             'line_items' => $line_items,
             'totals'     => array(
-                array( 'type' => 'subtotal', 'amount' => self::to_minor( (float) $order->get_subtotal() ) ),
-                array( 'type' => 'tax', 'amount' => self::to_minor( (float) $order->get_total_tax() ) ),
-                array( 'type' => 'shipping', 'amount' => self::to_minor( (float) $order->get_shipping_total() ) ),
-                array( 'type' => 'total', 'amount' => self::to_minor( (float) $order->get_total() ) ),
+                array( 'type' => 'subtotal', 'amount' => FD_UCP_Currency::to_minor( (float) $order->get_subtotal(), $currency ) ),
+                array( 'type' => 'tax', 'amount' => FD_UCP_Currency::to_minor( (float) $order->get_total_tax(), $currency ) ),
+                array( 'type' => 'shipping', 'amount' => FD_UCP_Currency::to_minor( (float) $order->get_shipping_total(), $currency ) ),
+                array( 'type' => 'total', 'amount' => FD_UCP_Currency::to_minor( (float) $order->get_total(), $currency ) ),
             ),
             'buyer'      => array(
                 'email'      => $order->get_billing_email(),

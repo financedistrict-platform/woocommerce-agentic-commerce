@@ -3,7 +3,7 @@
  * Plugin Name: Finance District Prism Payment
  * Plugin URI: https://developers.fd.xyz
  * Description: Stablecoin payment handler for WooCommerce UCP via Finance District Prism.
- * Version: 0.3.9
+ * Version: 0.3.12
  * Author: Finance District (1st Digital)
  * Author URI: https://fd.xyz
  * Requires at least: 6.4
@@ -16,7 +16,7 @@
  */
 defined('ABSPATH') || exit;
 
-define( 'FD_PRISM_VERSION', '0.3.9' );
+define( 'FD_PRISM_VERSION', '0.3.12' );
 
 add_action( 'before_woocommerce_init', function () {
     if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
@@ -37,7 +37,9 @@ function fd_prism_init() {
     // Require files
     $dir = plugin_dir_path(__FILE__);
     require_once $dir . 'includes/prism/class-fd-prism-client.php';
+    require_once $dir . 'includes/prism/class-fd-prism-settlement-summary.php';
     require_once $dir . 'includes/prism/class-fd-prism-validator.php';
+    require_once $dir . 'includes/prism/class-fd-prism-tokens.php';
     require_once $dir . 'includes/prism/class-fd-prism-handler.php';
     require_once $dir . 'includes/prism/class-fd-prism-gateway.php';
     require_once $dir . 'includes/admin/class-fd-prism-order-meta-box.php';
@@ -67,6 +69,10 @@ function fd_prism_init() {
     });
 
     fd_prism_maybe_upgrade();
+
+    add_action( 'fd_ucp_return_created', function ( $order ) {
+        FD_Prism_Settlement_Summary::note_return( $order, FD_Prism_Settlement_Summary::from_gateway() );
+    } );
 
     add_action('woocommerce_update_options_payment_gateways_fd_prism_x402', function() {
         $api_url = ( new FD_Prism_Gateway() )->api_url();

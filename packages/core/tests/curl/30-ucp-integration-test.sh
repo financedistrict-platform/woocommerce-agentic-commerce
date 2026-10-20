@@ -4,17 +4,31 @@ set -euo pipefail
 
 PRODUCT_ID="${1:-}"
 UCP_VER="${UCP_VER:-}"
-UCP_AGENT_PROFILE="${UCP_AGENT_PROFILE:-}"
+UCP_OTHER_PROFILE="${UCP_OTHER_PROFILE:-}"
+UCP_OTHER_API_KEY="${UCP_OTHER_API_KEY:-}"
+UCP_COUPON_CODE="${UCP_COUPON_CODE:-}"
+UCP_HOLD_SESSION_ID="${UCP_HOLD_SESSION_ID:-}"
+UCP_HOLD_SESSION_SECRET="${UCP_HOLD_SESSION_SECRET:-}"
+UCP_HOLD_COMPLETE_BODY="${UCP_HOLD_COMPLETE_BODY:-}"
 PASS=0
 FAIL=0
 SKIP=0
+HDR=$(mktemp)
+CART_SECRET=""
+trap 'rm -f "$HDR"' EXIT
+
+secret_of() { secret_from_headers "$HDR"; }
 
 ucp_curl() {
-  if [ -n "$UCP_AGENT_PROFILE" ]; then
-    curl -H "UCP-Agent: profile=\"$UCP_AGENT_PROFILE\"" "$@"
-  else
-    curl "$@"
-  fi
+  curl "$@"
+}
+
+anonymous_curl() {
+  command curl -H "UCP-Agent: profile=\"$UCP_PROFILE\"" "$@"
+}
+
+other_platform_curl() {
+  command curl -H "UCP-Agent: profile=\"$UCP_OTHER_PROFILE\"" -H "X-API-Key: $UCP_OTHER_API_KEY" "$@"
 }
 
 json_get() { python3 -c "import json,sys; d=json.load(sys.stdin); $1" 2>/dev/null || true; }
@@ -105,30 +119,42 @@ echo ""
 
 echo "3. Cart"
 if has_cap dev.ucp.shopping.cart; then
-  CART_RESP=$(ucp_curl -s -X POST "$UCP_API/carts" \
+  CART_RESP=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/carts" \
     -H "Content-Type: application/json" \
     -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
   CART_ID=$(echo "$CART_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+  CART_SECRET=$(secret_of)
   assert_not_empty "create cart" "$CART_ID"
+  assert_not_empty "create cart returns a session secret" "$CART_SECRET"
 
-  GET_CART=$(ucp_curl -s "$UCP_API/carts/$CART_ID")
+  CART_NO_SECRET=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/carts/$CART_ID")
+  assert_status "cart without the secret is refused" "401" "$CART_NO_SECRET"
+
+  CART_WRONG_SECRET=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: wrong" "$UCP_API/carts/$CART_ID")
+  assert_status "cart with a wrong secret is hidden" "404" "$CART_WRONG_SECRET"
+
+  GET_CART=$(ucp_curl -s -H "UCP-Session-Secret: $CART_SECRET" "$UCP_API/carts/$CART_ID")
   GOT_CART_ID=$(echo "$GET_CART" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
   assert_status "get cart" "$CART_ID" "$GOT_CART_ID"
 
   UPD_CART=$(ucp_curl -s -X PUT "$UCP_API/carts/$CART_ID" \
+    -H "UCP-Session-Secret: $CART_SECRET" \
     -H "Content-Type: application/json" \
     -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 2}]}")
   UPD_QTY=$(echo "$UPD_CART" | python3 -c "import json,sys; print(json.load(sys.stdin)['line_items'][0]['quantity'])" 2>/dev/null || echo "0")
   assert_status "update cart quantity" "2" "$UPD_QTY"
 
   # Cart → checkout
-  CART_CO=$(ucp_curl -s -X POST "$UCP_API/carts/$CART_ID/checkout" \
+  CART_CO=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/carts/$CART_ID/checkout" \
+    -H "UCP-Session-Secret: $CART_SECRET" \
     -H "Content-Type: application/json")
-  CART_SESSION=$(echo "$CART_CO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('checkout_session_id',''))" 2>/dev/null || true)
+  CART_SESSION=$(echo "$CART_CO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+  CART_SESSION_SECRET=$(secret_of)
   assert_not_empty "cart → checkout session" "$CART_SESSION"
+  assert_not_empty "cart checkout returns a new session secret" "$CART_SESSION_SECRET"
 
   # Cart should be deleted after checkout
-  DEL_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/carts/$CART_ID")
+  DEL_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $CART_SECRET" "$UCP_API/carts/$CART_ID")
   assert_status "cart deleted after checkout" "404" "$DEL_STATUS"
 else
   skip "cart (capability not advertised)"
@@ -138,15 +164,38 @@ echo ""
 # ── 4. Checkout Session (fresh) ───────────────────────────────
 
 echo "4. Checkout Session"
-CREATE=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions" \
+CREATE=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/checkout-sessions" \
   -H "Content-Type: application/json" \
   -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
 SESSION_ID=$(echo "$CREATE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+SESSION_SECRET=$(secret_of)
 assert_not_empty "create checkout session" "$SESSION_ID"
+assert_not_empty "create checkout session returns a session secret" "$SESSION_SECRET"
 
-GET_SESS=$(ucp_curl -s "$UCP_API/checkout-sessions/$SESSION_ID")
+GET_SESS=$(ucp_curl -s -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/checkout-sessions/$SESSION_ID")
 SESS_STATUS=$(echo "$GET_SESS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
 assert_status "session status is incomplete" "incomplete" "$SESS_STATUS"
+
+ANONYMOUS_GET=$(anonymous_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/checkout-sessions/$SESSION_ID")
+assert_status "session without credentials is refused" "401" "$ANONYMOUS_GET"
+
+NO_SECRET_GET=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/checkout-sessions/$SESSION_ID")
+assert_status "session without the secret is refused" "401" "$NO_SECRET_GET"
+
+WRONG_SECRET_GET=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: wrong" "$UCP_API/checkout-sessions/$SESSION_ID")
+assert_status "session with a wrong secret is hidden" "404" "$WRONG_SECRET_GET"
+
+if [ -n "$CART_SECRET" ]; then
+  CART_SECRET_GET=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $CART_SECRET" "$UCP_API/checkout-sessions/$SESSION_ID")
+  assert_status "session is not opened by a cart secret" "404" "$CART_SECRET_GET"
+fi
+
+if [ -n "$UCP_OTHER_PROFILE" ] && [ -n "$UCP_OTHER_API_KEY" ]; then
+  FOREIGN_GET=$(other_platform_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/checkout-sessions/$SESSION_ID")
+  assert_status "session of another platform with the secret is served" "200" "$FOREIGN_GET"
+else
+  skip "session of another platform (set UCP_OTHER_PROFILE and UCP_OTHER_API_KEY)"
+fi
 echo ""
 
 # ── 5. Buyer Identity ────────────────────────────────────────
@@ -154,12 +203,13 @@ echo ""
 echo "5. Buyer Identity"
 if has_cap dev.ucp.shopping.buyer_identity; then
   BUYER_UPD=$(ucp_curl -s -X PUT "$UCP_API/checkout-sessions/$SESSION_ID/buyer" \
+    -H "UCP-Session-Secret: $SESSION_SECRET" \
     -H "Content-Type: application/json" \
     -d '{"email": "test@example.com", "first_name": "Test", "last_name": "Agent", "phone": "+1234567890"}')
   BUYER_EMAIL=$(echo "$BUYER_UPD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('buyer',{}).get('email',''))" 2>/dev/null || true)
   assert_status "update buyer email" "test@example.com" "$BUYER_EMAIL"
 
-  BUYER_GET=$(ucp_curl -s "$UCP_API/checkout-sessions/$SESSION_ID/buyer")
+  BUYER_GET=$(ucp_curl -s -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/checkout-sessions/$SESSION_ID/buyer")
   BUYER_FIRST=$(echo "$BUYER_GET" | python3 -c "import json,sys; print(json.load(sys.stdin).get('buyer',{}).get('first_name',''))" 2>/dev/null || true)
   assert_status "get buyer first_name" "Test" "$BUYER_FIRST"
 else
@@ -167,37 +217,72 @@ else
 fi
 echo ""
 
+# ── 5b. Discount ─────────────────────────────────────────────
+
+echo "5b. Discount"
+if [ -n "$UCP_COUPON_CODE" ]; then
+  PROMO=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/promotions"     -H "UCP-Session-Secret: $SESSION_SECRET"     -H "Content-Type: application/json"     -d "{\"code\": \"$UCP_COUPON_CODE\"}")
+  if [ "$EXPECT_VER" = "2026-01-23" ]; then DISCOUNT_SIGN=1; else DISCOUNT_SIGN=-1; fi
+  DISCOUNT_SIGNED=$(echo "$PROMO" | json_get "print(any(t.get('type') == 'discount' and t.get('amount', 0) * $DISCOUNT_SIGN > 0 for t in d.get('totals', [])))")
+  assert_status "discount total has the sign of version $EXPECT_VER" "True" "$DISCOUNT_SIGNED"
+  DISCOUNT_IDENTITY=$(echo "$PROMO" | json_get "a = {t['type']: t['amount'] for t in d['totals']}; print(a['subtotal'] + a.get('fulfillment', 0) + a.get('tax', 0) - abs(a['discount']) == a['total'])")
+  assert_status "total equals subtotal plus fulfillment plus tax plus discount" "True" "$DISCOUNT_IDENTITY"
+else
+  skip "discount (set UCP_COUPON_CODE)"
+fi
+echo ""
+
+# ── 5c. Held payment ─────────────────────────────────────────
+
+echo "5c. Held payment"
+if [ -n "$UCP_HOLD_SESSION_ID" ] && [ -n "$UCP_HOLD_SESSION_SECRET" ] && [ -n "$UCP_HOLD_COMPLETE_BODY" ]; then
+  HOLD_FILE=$(mktemp)
+  HOLD_STATUS=$(ucp_curl -s -o "$HOLD_FILE" -w "%{http_code}" -X POST "$UCP_API/checkout-sessions/$UCP_HOLD_SESSION_ID/complete"     -H "UCP-Session-Secret: $UCP_HOLD_SESSION_SECRET"     -H "Content-Type: application/json"     -d "$UCP_HOLD_COMPLETE_BODY")
+  assert_status "held payment answers 200" "200" "$HOLD_STATUS"
+  assert_status "held payment requires escalation" "requires_escalation" "$(json_get "print(d.get('status',''))" < "$HOLD_FILE")"
+  assert_status "held payment carries a review message" "requires_buyer_review" "$(json_get "print(next((m.get('severity') for m in d.get('messages', []) if m.get('code') == 'payment_on_hold'), ''))" < "$HOLD_FILE")"
+  assert_status "held payment message is an error" "error" "$(json_get "print(next((m.get('type') for m in d.get('messages', []) if m.get('code') == 'payment_on_hold'), ''))" < "$HOLD_FILE")"
+  assert_status "held payment continues over https" "True" "$(json_get "print(d.get('continue_url', '').startswith('https://'))" < "$HOLD_FILE")"
+  rm -f "$HOLD_FILE"
+else
+  skip "held payment (set UCP_HOLD_SESSION_ID, UCP_HOLD_SESSION_SECRET and UCP_HOLD_COMPLETE_BODY)"
+fi
+echo ""
+
 # ── 6. Cancel Session (for cleanup) ──────────────────────────
 
 echo "6. Cancel Session"
 CANCEL=$(ucp_curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/cancel" \
+  -H "UCP-Session-Secret: $SESSION_SECRET" \
   -H "Content-Type: application/json")
 CANCEL_STATUS=$(echo "$CANCEL" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
 assert_status "cancel session" "canceled" "$CANCEL_STATUS"
 echo ""
 
-# ── 7. Orders List ────────────────────────────────────────────
+# ── 7. Orders ─────────────────────────────────────────────────
 
 echo "7. Orders"
-ORDERS=$(ucp_curl -s "$UCP_API/orders")
-ORDER_STATUS=$(echo "$ORDERS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ucp',{}).get('status',''))" 2>/dev/null || true)
-assert_status "list orders endpoint returns success" "success" "$ORDER_STATUS"
+ORDERS_LIST_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/orders")
+assert_status "orders cannot be listed" "404" "$ORDERS_LIST_STATUS"
+UNKNOWN_ORDER_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $SESSION_SECRET" "$UCP_API/orders/wc_order_doesnotexist")
+assert_status "unknown order key returns 404" "404" "$UNKNOWN_ORDER_STATUS"
 echo ""
 
 # ── 8. Cart Delete ────────────────────────────────────────────
 
 echo "8. Cart Delete"
 if has_cap dev.ucp.shopping.cart; then
-  CART2_RESP=$(ucp_curl -s -X POST "$UCP_API/carts" \
+  CART2_RESP=$(ucp_curl -s -D "$HDR" -X POST "$UCP_API/carts" \
     -H "Content-Type: application/json" \
     -d "{\"line_items\": [{\"item\": {\"id\": \"$PRODUCT_ID\"}, \"quantity\": 1}]}")
   CART2_ID=$(echo "$CART2_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+  CART2_SECRET=$(secret_of)
   assert_not_empty "create cart for delete test" "$CART2_ID"
 
-  DEL2_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" -X DELETE "$UCP_API/carts/$CART2_ID")
+  DEL2_STATUS=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $CART2_SECRET" -X DELETE "$UCP_API/carts/$CART2_ID")
   assert_status "delete cart returns 204" "204" "$DEL2_STATUS"
 
-  DEL2_GET=$(ucp_curl -s -o /dev/null -w "%{http_code}" "$UCP_API/carts/$CART2_ID")
+  DEL2_GET=$(ucp_curl -s -o /dev/null -w "%{http_code}" -H "UCP-Session-Secret: $CART2_SECRET" "$UCP_API/carts/$CART2_ID")
   assert_status "deleted cart returns 404" "404" "$DEL2_GET"
 else
   skip "cart delete (capability not advertised)"

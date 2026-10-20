@@ -8,5 +8,4 @@ if [ -z "${CART_ID:-}" ]; then
 fi
 
 echo "=== Get Cart $CART_ID ==="
-curl -s "$UCP_API/carts/$CART_ID" \
-  ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} | python3 -m json.tool
+curl -s "$UCP_API/carts/$CART_ID" | python3 -m json.tool

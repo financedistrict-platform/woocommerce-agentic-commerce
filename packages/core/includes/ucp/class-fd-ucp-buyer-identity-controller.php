@@ -12,12 +12,12 @@ class FD_UCP_Buyer_Identity_Controller {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 			array(
 				'methods'             => 'PUT',
 				'callback'            => array( $this, 'update_buyer' ),
-				'permission_callback' => '__return_true',
+				'permission_callback' => array( 'FD_UCP_Plugin', 'require_platform' ),
 			),
 		) );
 	}
@@ -34,9 +34,22 @@ class FD_UCP_Buyer_Identity_Controller {
 	}
 
 	public function update_buyer( WP_REST_Request $request ): WP_REST_Response {
+		return FD_UCP_Session_Lock::run(
+			(string) $request->get_param( 'id' ),
+			'session_busy',
+			'Checkout session is being changed by another request',
+			fn() => $this->do_update_buyer( $request )
+		);
+	}
+
+	private function do_update_buyer( WP_REST_Request $request ): WP_REST_Response {
 		$session = $this->load_session( $request );
 		if ( $session instanceof WP_REST_Response ) {
 			return $session;
+		}
+
+		if ( ! FD_UCP_Status::is_mutable( $session ) ) {
+			return FD_UCP_Error::session_closed( $session );
 		}
 
 		$existing = json_decode( $session['buyer'] ?? '{}', true ) ?: array();
@@ -68,6 +81,11 @@ class FD_UCP_Buyer_Identity_Controller {
 	}
 
 	private function load_session( WP_REST_Request $request ) {
+		$presented = FD_UCP_Ownership::presented( $request );
+		if ( '' === $presented ) {
+			return FD_UCP_Ownership::secret_required();
+		}
+
 		$id = $request->get_param( 'id' );
 
 		global $wpdb;
@@ -77,25 +95,12 @@ class FD_UCP_Buyer_Identity_Controller {
 			ARRAY_A
 		);
 
-		if ( ! $session ) {
-			return FD_UCP_Error::response( 'session_not_found', 'Session not found', 404 );
+		if ( ! $session || ! FD_UCP_Ownership::owns( $session, 'session_secret_hash', $presented ) ) {
+			return FD_UCP_Error::response( 'checkout_not_found', 'Checkout session not found', 404 );
 		}
 
 		$pin = FD_UCP_Plugin::instance()->pin_session( $request, $session['ucp_version'] ?? null );
-		if ( null !== $pin ) {
-			return $pin;
-		}
-
-		$stored = $session['agent_fingerprint'] ?? '';
-		if ( ! empty( $stored ) ) {
-			$agent      = $request->get_header( 'ucp-agent' ) ?? '';
-			$request_fp = hash( 'sha256', $agent );
-			if ( ! hash_equals( $stored, $request_fp ) ) {
-				return FD_UCP_Error::response( 'session_not_found', 'Session not found', 403 );
-			}
-		}
-
-		return $session;
+		return null !== $pin ? $pin : $session;
 	}
 
 	private function envelope( array $session, array $buyer ): array {

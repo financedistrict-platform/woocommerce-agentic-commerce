@@ -16,5 +16,4 @@ fi
 echo "=== Apply Promotion '$CODE' to Session $SESSION_ID ==="
 curl -s -X POST "$UCP_API/checkout-sessions/$SESSION_ID/promotions" \
   -H "Content-Type: application/json" \
-  ${UCP_AGENT:+-H "UCP-Agent: $UCP_AGENT"} \
   -d "{\"code\": \"$CODE\"}" | python3 -m json.tool

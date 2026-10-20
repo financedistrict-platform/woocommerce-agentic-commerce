@@ -3,12 +3,28 @@ defined( 'ABSPATH' ) || exit;
 
 class FD_UCP_Status {
 
+    public static function is_mutable( array $session ): bool {
+        return 'incomplete' === ( $session['status'] ?? null ) && ! self::is_past_expiry( $session );
+    }
+
+    public static function closed_as( array $session ): string {
+        return self::is_past_expiry( $session ) ? 'expired' : self::resolve( $session );
+    }
+
+    private static function is_past_expiry( array $session ): bool {
+        return ! empty( $session['expires_at'] ) && strtotime( $session['expires_at'] ) < time();
+    }
+
     /**
      * Derive UCP checkout status from session data.
      */
     public static function resolve( array $session ): string {
-        if ( in_array( $session['status'], array( 'canceled', 'completed', 'expired' ), true ) ) {
+        if ( in_array( $session['status'], array( 'canceled', 'completed', 'requires_escalation', 'expired' ), true ) ) {
             return $session['status'];
+        }
+
+        if ( in_array( $session['status'], array( 'payment_pending', 'complete_in_progress' ), true ) ) {
+            return 'complete_in_progress';
         }
 
         $missing = self::missing_requirements( $session );

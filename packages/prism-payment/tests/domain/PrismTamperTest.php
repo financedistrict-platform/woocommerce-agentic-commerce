@@ -1,0 +1,888 @@
+<?php
+declare( strict_types=1 );
+
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+
+final class PrismTamperTest extends TestCase {
+
+    private const GW           = 'https://gateway.test';
+    private const RESOURCE_URL = 'https://store.test/wp-json/fd-ucp/v1/checkout-sessions/c1';
+    private const NETWORK      = 'eip155:84532';
+    private const ASSET        = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+    private const PAY_TO       = '0x40a01003f7543a3a3ee64ffb05504173bdb1c4fd';
+    private const PAYER        = '0xb5004598bBf235A30494339500601D0cD8E5367A';
+    private const AMOUNT       = '100010';
+    private const NONCE        = '0x' . 'ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12';
+
+    private FD_Test_Claims_Wpdb $db;
+
+    protected function setUp(): void {
+        $this->db        = new FD_Test_Claims_Wpdb();
+        $GLOBALS['wpdb'] = $this->db;
+        $GLOBALS['fd_test_requests']      = array();
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK ) ),
+        );
+    }
+
+    private static function stored_entry(): array {
+        return array(
+            'scheme'            => 'exact',
+            'network'           => self::NETWORK,
+            'asset'             => self::ASSET,
+            'payTo'             => self::PAY_TO,
+            'amount'            => self::AMOUNT,
+            'maxTimeoutSeconds' => 300,
+            'extra'             => array( 'name' => 'USDC', 'version' => '2' ),
+        );
+    }
+
+    private static function meta(): array {
+        return array( 'xyz.fd.prism_payment' => array( 'ucp' => array( 'xyz.fd.prism_payment' => array( array(
+            'id'      => 'xyz.fd.prism_payment',
+            'version' => '2026-10-07',
+            'config'  => array(
+                'x402Version' => 2,
+                'resource'    => array( 'url' => self::RESOURCE_URL, 'description' => 'Order at Store' ),
+                'accepts'     => array( self::stored_entry() ),
+            ),
+        ) ) ) ) );
+    }
+
+    private static function authorization(): array {
+        return array(
+            'from'        => self::PAYER,
+            'to'          => self::PAY_TO,
+            'value'       => self::AMOUNT,
+            'validAfter'  => (string) ( time() - 60 ),
+            'validBefore' => (string) ( time() + 300 ),
+            'nonce'       => self::NONCE,
+        );
+    }
+
+    private static function credential(): array {
+        return array(
+            'x402Version'    => 2,
+            'paymentPayload' => array(
+                'x402Version' => 2,
+                'resource'    => array( 'url' => self::RESOURCE_URL ),
+                'accepted'    => self::stored_entry(),
+                'payload'     => array(
+                    'signature'     => '0x' . str_repeat( 'cd', 65 ),
+                    'authorization' => self::authorization(),
+                ),
+            ),
+        );
+    }
+
+    private function settle( $credential, string $checkout_id = 'c1', array $extra = array() ): array {
+        return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => $checkout_id,
+            'credential'    => $credential,
+            'checkout_meta' => self::quoted_meta(),
+        ) + $extra );
+    }
+
+    private static function quoted_meta(): array {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['prepared_amount'] = 10001;
+        return $meta;
+    }
+
+    private static function settle_body(): array {
+        return json_decode( $GLOBALS['fd_test_requests'][0]['args']['body'], true );
+    }
+
+    private function assertRejectedBeforeSettle( array $result ): void {
+        $this->assertFalse( $result['success'] );
+        $this->assertSame( array(), $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_untampered_credential_settles_against_the_stored_requirements(): void {
+        $credential = self::credential();
+
+        $result = $this->settle( $credential );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+        $this->assertSame( self::GW . '/api/v2/payment/settle', $GLOBALS['fd_test_requests'][0]['url'] );
+        $body = self::settle_body();
+        $this->assertSame( self::stored_entry(), $body['paymentRequirements'] );
+        $this->assertSame( self::stored_entry(), $body['paymentPayload']['accepted'] );
+        $this->assertSame( $credential['paymentPayload']['payload'], $body['paymentPayload']['payload'] );
+        $this->assertSame( self::RESOURCE_URL, $body['paymentPayload']['resource']['url'] );
+        $this->assertSame( self::NETWORK, $result['order_meta']['_fd_prism_network'] );
+        $this->assertSame( self::ASSET, $result['order_meta']['_fd_prism_asset'] );
+        $this->assertSame( self::AMOUNT, $result['order_meta']['_fd_prism_amount'] );
+    }
+
+    public function test_encoded_credential_settles_with_the_same_body(): void {
+        $credential = self::credential();
+        $this->settle( base64_encode( json_encode( $credential ) ) );
+        $encoded = self::settle_body();
+        $GLOBALS['fd_test_requests'] = array();
+
+        $this->settle( $credential );
+
+        $this->assertSame( self::settle_body(), $encoded );
+    }
+
+    public function test_forwarded_requirements_are_rebuilt_from_the_stored_entry(): void {
+        $credential                        = self::credential();
+        $credential['paymentRequirements'] = array_merge( self::stored_entry(), array(
+            'network' => 'eip155:1',
+            'asset'   => '0x9999999999999999999999999999999999999999',
+            'amount'  => '1',
+        ) );
+
+        $result = $this->settle( $credential );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertSame( self::stored_entry(), self::settle_body()['paymentRequirements'] );
+    }
+
+    public function test_only_the_signed_payload_fields_are_forwarded(): void {
+        $credential                                                      = self::credential();
+        $expected                                                        = $credential['paymentPayload']['payload'];
+        $credential['paymentPayload']['extensions']                      = array( 'x' => 1 );
+        $credential['paymentPayload']['payload']['asset']                = '0x9999999999999999999999999999999999999999';
+        $credential['paymentPayload']['payload']['authorization']['to2'] = '0x2222222222222222222222222222222222222222';
+
+        $this->settle( $credential );
+
+        $this->assertSame( $expected, self::settle_body()['paymentPayload']['payload'] );
+        $this->assertArrayNotHasKey( 'extensions', self::settle_body()['paymentPayload'] );
+    }
+
+    public function test_bare_payment_payload_settles_like_the_wrapped_one(): void {
+        $credential = self::credential();
+        $this->settle( $credential['paymentPayload'] );
+        $bare = self::settle_body();
+        $GLOBALS['fd_test_requests'] = array();
+
+        $this->settle( $credential );
+
+        $this->assertSame( self::settle_body(), $bare );
+    }
+
+    public function test_small_clock_skew_on_valid_after_is_tolerated(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validAfter'] = (string) ( time() + 5 );
+
+        $this->assertTrue( $this->settle( $credential )['success'] );
+    }
+
+    public function test_client_x402_version_does_not_pick_the_settle_route(): void {
+        $credential                                  = self::credential();
+        $credential['x402Version']                   = 1;
+        $credential['paymentPayload']['x402Version'] = 1;
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public static function tampered_credentials(): array {
+        $cases = array();
+
+        $c = self::credential();
+        $c['paymentPayload']['network']             = self::NETWORK;
+        $c['paymentPayload']['accepted']['network'] = 'eip155:1';
+        $cases['payload network matches quote, accepted network differs'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['network'] = 'eip155:56';
+        $cases['payload network differs from accepted network'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['accepted']['asset'] = '0x9999999999999999999999999999999999999999';
+        $c['paymentRequirements']                 = self::stored_entry();
+        $cases['accepted asset differs, forwarded requirements copy the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['accepted']['payTo'] = '0x2222222222222222222222222222222222222222';
+        $cases['accepted payTo differs from the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['accepted']['amount'] = '1';
+        $cases['accepted amount differs from the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['payload']['authorization']['value'] = '100000000';
+        $cases['signed value above the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['payload']['authorization']['value'] = '100009';
+        $cases['signed value below the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['network'] = self::NETWORK;
+        unset( $c['paymentPayload']['accepted']['network'] );
+        $cases['accepted without network'] = array( $c );
+
+        $c             = self::credential();
+        $c['accepted'] = self::stored_entry();
+        $cases['wrapped and bare payload in one credential'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['accepted']['scheme'] = 'upto';
+        $cases['accepted scheme differs from the quote'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+        $cases['authorization already expired'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['payload']['authorization']['validAfter'] = (string) ( time() + 3600 );
+        $cases['authorization not yet valid'] = array( $c );
+
+        $c = self::credential();
+        $c['paymentPayload']['resource']['url'] = 'https://store.test/wp-json/fd-ucp/v1/checkout-sessions/other';
+        $cases['resource url names another session'] = array( $c );
+
+        foreach ( array( 'from', 'nonce', 'validBefore', 'validAfter' ) as $field ) {
+            $c = self::credential();
+            unset( $c['paymentPayload']['payload']['authorization'][ $field ] );
+            $cases[ "authorization without $field" ] = array( $c );
+        }
+
+        $c = self::credential();
+        unset( $c['paymentPayload']['payload']['signature'] );
+        $cases['payload without signature'] = array( $c );
+
+        $c = self::credential();
+        unset( $c['paymentPayload']['accepted'] );
+        $cases['payload without accepted'] = array( $c );
+
+        $c                  = self::credential();
+        $c['authorization'] = array( 'paymentPayload' => self::credential()['paymentPayload'] );
+        $c['authorization']['paymentPayload']['payload']['authorization']['value'] = '1';
+        $cases['credential carrying both authorization and paymentPayload'] = array( $c );
+
+        $cases['flat credential shape'] = array( array(
+            'network' => self::NETWORK,
+            'asset'   => self::ASSET,
+            'value'   => self::AMOUNT,
+            'to'      => self::PAY_TO,
+            'from'    => self::PAYER,
+        ) );
+
+        return $cases;
+    }
+
+    #[DataProvider( 'tampered_credentials' )]
+    public function test_tampered_credential_is_rejected_before_settle( array $credential ): void {
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public function test_stored_quote_without_resource_url_is_rejected(): void {
+        $meta = self::meta();
+        unset( $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['resource'] );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public function test_stored_amount_that_is_not_an_integer_never_matches(): void {
+        $meta  = self::meta();
+        $entry = array_merge( self::stored_entry(), array( 'amount' => '1000.10' ) );
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] = array( $entry );
+        $credential = self::credential();
+        $credential['paymentPayload']['accepted']                          = $entry;
+        $credential['paymentPayload']['payload']['authorization']['value'] = '1000.10';
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => $credential,
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public function test_stored_quote_without_x402_version_is_rejected(): void {
+        $meta = self::meta();
+        unset( $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['x402Version'] );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    private function settle_with_stored_entry( array $entry, array $signed = array() ): array {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] = array( $entry );
+
+        $credential                                                         = self::credential();
+        $credential['paymentPayload']['accepted']                           = $entry;
+        $credential['paymentPayload']['payload']['authorization']['value'] = $entry['amount'] ?? self::AMOUNT;
+        $credential['paymentPayload']['payload']['authorization']['to']    = $entry['payTo'] ?? self::PAY_TO;
+        $credential['paymentPayload']['payload']['authorization']       = $signed + $credential['paymentPayload']['payload']['authorization'];
+
+        return ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => $credential,
+            'checkout_meta' => $meta,
+        ) );
+    }
+
+    public static function unusable_stored_amounts(): array {
+        return array(
+            'zero'                  => array( '0' ),
+            'several zeros'         => array( '000' ),
+            'leading zeros'         => array( '0100010' ),
+            'plus sign'             => array( '+100010' ),
+            'whitespace'            => array( ' 100010' ),
+            'empty'                 => array( '' ),
+            'hexadecimal'           => array( '0x186aa' ),
+            'exponent'              => array( '1e5' ),
+        );
+    }
+
+    #[DataProvider( 'unusable_stored_amounts' )]
+    public function test_stored_amount_that_is_not_a_positive_canonical_integer_is_rejected( string $amount ): void {
+        $entry = array_merge( self::stored_entry(), array( 'amount' => $amount ) );
+
+        $this->assertRejectedBeforeSettle( $this->settle_with_stored_entry( $entry ) );
+    }
+
+    public static function stored_entries_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'scheme', 'network', 'asset', 'payTo', 'amount' ) as $field ) {
+            $cases[ "stored entry without $field" ]           = array( $field, null );
+            $cases[ "stored entry with empty $field" ]        = array( $field, '' );
+            $cases[ "stored entry with non-string $field" ]   = array( $field, array( 'x' ) );
+        }
+        return $cases;
+    }
+
+    #[DataProvider( 'stored_entries_with_missing_data' )]
+    public function test_stored_entry_with_missing_or_empty_field_is_rejected( string $field, $value ): void {
+        $entry = self::stored_entry();
+        if ( null === $value ) {
+            unset( $entry[ $field ] );
+        } else {
+            $entry[ $field ] = $value;
+        }
+
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config']['accepts'] = array( $entry );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unusable_stored_quotes(): array {
+        return array(
+            'no quote at all'        => array( null ),
+            'quote is a string'      => array( 'quote' ),
+            'quote without accepts'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ) ) ),
+            'quote with empty list'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => array() ) ),
+            'accepts is not a list'  => array( array( 'x402Version' => 2, 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => 'any' ) ),
+            'resource url empty'     => array( array( 'x402Version' => 2, 'resource' => array( 'url' => '' ), 'accepts' => array( self::stored_entry() ) ) ),
+            'version as string'      => array( array( 'x402Version' => '2', 'resource' => array( 'url' => self::RESOURCE_URL ), 'accepts' => array( self::stored_entry() ) ) ),
+        );
+    }
+
+    #[DataProvider( 'unusable_stored_quotes' )]
+    public function test_unusable_stored_quote_is_rejected_before_settle( $config ): void {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['ucp']['xyz.fd.prism_payment'][0]['config'] = $config;
+        if ( null === $config ) {
+            unset( $meta['xyz.fd.prism_payment']['ucp'] );
+        }
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unreadable_credentials(): array {
+        return array(
+            'null'                   => array( null ),
+            'empty string'           => array( '' ),
+            'plain text'             => array( 'paid' ),
+            'broken base64'          => array( '!!!not-base64!!!' ),
+            'base64 of plain text'   => array( base64_encode( 'paid' ) ),
+            'empty array'            => array( array() ),
+            'json scalar'            => array( '42' ),
+            'boolean'                => array( true ),
+            'payload is a string'    => array( array( 'paymentPayload' => 'x' ) ),
+            'payload is empty'       => array( array( 'paymentPayload' => array() ) ),
+        );
+    }
+
+    #[DataProvider( 'unreadable_credentials' )]
+    public function test_unreadable_credential_is_rejected_before_settle( $credential ): void {
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public static function authorizations_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'from', 'to', 'value', 'validAfter', 'validBefore', 'nonce' ) as $field ) {
+            $cases[ "authorization without $field" ]    = array( $field, null );
+            $cases[ "authorization with empty $field" ] = array( $field, '' );
+            $cases[ "authorization with integer $field" ] = array( $field, 1 );
+        }
+        $cases['authorization with short nonce']       = array( 'nonce', '0x12' );
+        $cases['authorization with non-hex nonce']     = array( 'nonce', '0x' . str_repeat( 'zz', 32 ) );
+        $cases['authorization with negative value']    = array( 'value', '-100010' );
+        $cases['authorization with decimal value']     = array( 'value', '100010.0' );
+        $cases['authorization with padded value']      = array( 'value', '0100010' );
+        return $cases;
+    }
+
+    #[DataProvider( 'authorizations_with_missing_data' )]
+    public function test_authorization_with_missing_or_malformed_field_is_rejected( string $field, $value ): void {
+        $credential = self::credential();
+        if ( null === $value ) {
+            unset( $credential['paymentPayload']['payload']['authorization'][ $field ] );
+        } else {
+            $credential['paymentPayload']['payload']['authorization'][ $field ] = $value;
+        }
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public static function accepted_with_missing_data(): array {
+        $cases = array();
+        foreach ( array( 'scheme', 'network', 'asset', 'payTo', 'amount' ) as $field ) {
+            $cases[ "accepted without $field" ]    = array( $field, null );
+            $cases[ "accepted with empty $field" ] = array( $field, '' );
+        }
+        return $cases;
+    }
+
+    #[DataProvider( 'accepted_with_missing_data' )]
+    public function test_accepted_requirements_with_missing_or_empty_field_are_rejected( string $field, $value ): void {
+        $credential = self::credential();
+        if ( null === $value ) {
+            unset( $credential['paymentPayload']['accepted'][ $field ] );
+        } else {
+            $credential['paymentPayload']['accepted'][ $field ] = $value;
+        }
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential ) );
+    }
+
+    public function test_storefront_checkout_never_offers_the_prism_gateway(): void {
+        $GLOBALS['fd_test_options']['woocommerce_fd_prism_x402_settings'] = array(
+            'enabled' => 'yes',
+            'api_url' => self::GW,
+            'api_key' => 'key',
+        );
+
+        $gateway = new FD_Prism_Gateway();
+
+        $this->assertSame( 'yes', $gateway->enabled );
+        $this->assertFalse( $gateway->is_available() );
+    }
+
+    public function test_storefront_checkout_never_reports_a_payment_as_taken(): void {
+        $GLOBALS['fd_test_notices'] = array();
+
+        $result = ( new FD_Prism_Gateway() )->process_payment( 123 );
+
+        $this->assertSame( 'failure', $result['result'] );
+        $this->assertArrayNotHasKey( 'redirect', $result );
+        $this->assertCount( 1, $GLOBALS['fd_test_notices'] );
+        $this->assertSame( 'error', $GLOBALS['fd_test_notices'][0]['type'] );
+    }
+
+    public function test_one_signed_authorization_settles_only_one_checkout_session(): void {
+        $credential = self::credential();
+
+        $first  = $this->settle( $credential, 'c1' );
+        $second = $this->settle( $credential, 'c2' );
+
+        $this->assertTrue( $first['success'] );
+        $this->assertFalse( $second['success'] );
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_same_session_may_retry_its_own_authorization(): void {
+        $credential = self::credential();
+
+        $first  = $this->settle( $credential );
+        $second = $this->settle( $credential );
+
+        $this->assertTrue( $first['success'] );
+        $this->assertTrue( $second['success'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_authorization_is_claimed_before_prism_is_called(): void {
+        $GLOBALS['fd_test_http_response'] = array( 'response' => array( 'code' => 500 ), 'body' => '' );
+        $credential                       = self::credential();
+
+        $failed = $this->settle( $credential, 'c1' );
+        $GLOBALS['fd_test_requests'] = array();
+        $other  = $this->settle( $credential, 'c2' );
+
+        $this->assertFalse( $failed['success'] );
+        $this->assertFalse( $other['success'] );
+        $this->assertSame( array(), $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_claim_ignores_the_case_of_payer_and_nonce(): void {
+        $first                                                       = self::credential();
+        $second                                                      = self::credential();
+        $second['paymentPayload']['payload']['authorization']['from']  = strtolower( self::PAYER );
+        $second['paymentPayload']['payload']['authorization']['nonce'] = '0x' . substr( strtoupper( self::NONCE ), 2 );
+
+        $this->settle( $first, 'c1' );
+        $GLOBALS['fd_test_requests'] = array();
+
+        $result = $this->settle( $second, 'c2' );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public function test_a_fresh_nonce_settles_on_another_session(): void {
+        $other                                                         = self::credential();
+        $other['paymentPayload']['payload']['authorization']['nonce'] = '0x' . str_repeat( '12', 32 );
+
+        $this->settle( self::credential(), 'c1' );
+        $result = $this->settle( $other, 'c2' );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    private function respond( array $body ): void {
+        $GLOBALS['fd_test_http_response'] = array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $body ) );
+    }
+
+    private static function settled_response( array $override = array() ): array {
+        return $override + array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK );
+    }
+
+    public static function unsettled_responses(): array {
+        return array(
+            'success is false'                    => array( self::settled_response( array( 'success' => false ) ) ),
+            'success is false without hash'       => array( self::settled_response( array( 'success' => false, 'transaction' => '' ) ) ),
+            'success flag absent, no hash'        => array( array( 'payer' => self::PAYER, 'network' => self::NETWORK ) ),
+            'success is the string true, no hash' => array( array( 'success' => 'true', 'network' => self::NETWORK ) ),
+            'empty object'                        => array( array() ),
+        );
+    }
+
+    #[DataProvider( 'unsettled_responses' )]
+    public function test_settlement_without_an_explicit_success_is_not_accepted( array $body ): void {
+        $this->respond( $body );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+    }
+
+    public static function inconsistent_responses(): array {
+        return array(
+            'success flag absent, hash present'   => array( array( 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK ) ),
+            'success is the string true'          => array( self::settled_response( array( 'success' => 'true' ) ) ),
+            'success is the number one'           => array( self::settled_response( array( 'success' => 1 ) ) ),
+            'network differs from the quote'   => array( self::settled_response( array( 'network' => 'eip155:1' ) ) ),
+            'network missing'                  => array( array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc' ) ),
+            'payer differs from the signer'    => array( self::settled_response( array( 'payer' => '0x2222222222222222222222222222222222222222' ) ) ),
+            'payer is not a string'            => array( self::settled_response( array( 'payer' => array( self::PAYER ) ) ) ),
+            'amount differs from the quote'    => array( self::settled_response( array( 'amount' => '1' ) ) ),
+            'amount is not an integer string'  => array( self::settled_response( array( 'amount' => '100010.5' ) ) ),
+            'transaction hash missing'         => array( array( 'success' => true, 'payer' => self::PAYER, 'network' => self::NETWORK ) ),
+            'transaction hash empty'           => array( self::settled_response( array( 'transaction' => '' ) ) ),
+            'transaction hash is not a string' => array( self::settled_response( array( 'transaction' => array( '0xabc' ) ) ) ),
+        );
+    }
+
+    #[DataProvider( 'inconsistent_responses' )]
+    public function test_settlement_that_disagrees_with_the_quote_is_held_for_review( array $body ): void {
+        $this->respond( $body );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertNull( $result['settled_amount'] );
+        $this->assertNotSame( '', (string) ( $result['hold_reason'] ?? '' ) );
+    }
+
+    public function test_settlement_matching_the_quote_reports_the_quoted_amount_and_no_hold(): void {
+        $meta = self::meta();
+        $meta['xyz.fd.prism_payment']['prepared_amount'] = 10001;
+        $this->respond( self::settled_response( array( 'amount' => self::AMOUNT, 'payer' => strtolower( self::PAYER ) ) ) );
+
+        $result = ( new FD_Prism_Handler( self::GW, 'key' ) )->settle_payment( array(
+            'checkout_id'   => 'c1',
+            'credential'    => self::credential(),
+            'checkout_meta' => $meta,
+        ) );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertSame( 10001, $result['settled_amount'] );
+        $this->assertArrayNotHasKey( 'hold_reason', $result );
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+    }
+
+    public function test_settlement_amount_sent_as_a_json_integer_matches_the_quote(): void {
+        $this->respond( self::settled_response( array( 'amount' => (int) self::AMOUNT ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['success'] );
+        $this->assertArrayNotHasKey( 'hold_reason', $result );
+    }
+
+    public function test_hold_reason_names_the_observed_and_the_stored_value(): void {
+        $this->respond( self::settled_response( array( 'network' => 'eip155:1' ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertStringContainsString( 'eip155:1', $result['hold_reason'] );
+        $this->assertStringContainsString( self::NETWORK, $result['hold_reason'] );
+    }
+
+    public function test_inconsistent_settlement_still_records_the_transaction_for_the_merchant(): void {
+        $this->respond( self::settled_response( array( 'network' => 'eip155:1' ) ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+        $this->assertSame( '0xabc', $result['order_meta']['_fd_prism_tx_hash'] );
+    }
+
+    public static function token_amounts(): array {
+        return array(
+            'usdc six decimals'        => array( '100010', '0x036CbD53842c5426634e7929541eC2318f3dCF7e', '0.100010 USDC' ),
+            'fdusd eighteen decimals'  => array( '1500000000000000000', '0xaB27f55dB008704eD8098F0dFBcF5E1aa387B9D9', '1.500000000000000000 FDUSD' ),
+            'fdusd sub-unit'           => array( '1', '0xab27f55db008704ed8098f0dfbcf5e1aa387b9d9', '0.000000000000000001 FDUSD' ),
+            'usdc whole units'         => array( '25000000', '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', '25.000000 USDC' ),
+            'unknown token'            => array( '1500000', '0x9999999999999999999999999999999999999999', '1500000 atomic units of 0x9999999999999999999999999999999999999999' ),
+            'unknown token no address' => array( '1500000', '', '1500000 atomic units' ),
+            'amount is not digits'     => array( '1e6', '0x036cbd53842c5426634e7929541ec2318f3dcf7e', '' ),
+        );
+    }
+
+    #[DataProvider( 'token_amounts' )]
+    public function test_admin_amount_uses_the_decimals_of_the_settled_token( string $atomic, string $asset, string $expected ): void {
+        $this->assertSame( $expected, FD_Prism_Tokens::amount_label( $atomic, $asset ) );
+    }
+
+    public function test_unavailable_claim_store_rejects_before_settle(): void {
+        $this->db->broken = true;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertRejectedBeforeSettle( $result );
+    }
+
+    public static function unknown_outcomes(): array {
+        $pending = json_encode( array( 'success' => false, 'errorReason' => 'settlement_pending', 'transaction' => '' ) );
+        return array(
+            'transport error'       => array( new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' ) ),
+            'http 500'              => array( array( 'response' => array( 'code' => 500 ), 'body' => '' ) ),
+            'http 502'              => array( array( 'response' => array( 'code' => 502 ), 'body' => '<html>Bad Gateway</html>' ) ),
+            'http 504'              => array( array( 'response' => array( 'code' => 504 ), 'body' => '' ) ),
+            'http 408'              => array( array( 'response' => array( 'code' => 408 ), 'body' => '' ) ),
+            'http 429'              => array( array( 'response' => array( 'code' => 429 ), 'body' => '' ) ),
+            'unparseable success'   => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ) ),
+            'empty success body'    => array( array( 'response' => array( 'code' => 200 ), 'body' => '' ) ),
+            'settlement pending'    => array( array( 'response' => array( 'code' => 200 ), 'body' => $pending ) ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ) ),
+            'receipt timeout'       => array( self::gateway_answer( 'receipt_timeout' ) ),
+            'transaction reverted'  => array( self::gateway_answer( 'transaction_reverted' ) ),
+            'execution failed'      => array( self::gateway_answer( 'execution_failed: Transaction would revert: execution reverted: FiatTokenV2: authorization is used or canceled' ) ),
+            'execution cancelled'   => array( self::gateway_answer( 'execution_cancelled' ) ),
+            'settlement failed'     => array( self::gateway_answer( 'settlement_failed' ) ),
+            'facilitator failed'    => array( self::gateway_answer( 'facilitator_settlement_failed' ) ),
+            'unlisted reason'       => array( self::gateway_answer( 'some_future_reason' ) ),
+            'reason is not a string' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => array( 'x' ), 'transaction' => '' ) ) ) ),
+            'no reason at all'      => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'transaction' => '' ) ) ) ),
+        );
+    }
+
+    private static function gateway_answer( string $reason ): array {
+        return array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => $reason, 'transaction' => '' ) ),
+        );
+    }
+
+    #[DataProvider( 'unknown_outcomes' )]
+    public function test_unknown_settlement_outcome_is_pending_not_rejected( $response ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+        $this->assertArrayNotHasKey( 'review', $result );
+    }
+
+    public static function answered_outcomes(): array {
+        return array(
+            'transport error'         => array( new WP_Error( 'http_request_failed', 'cURL error 28' ), false, 'no response' ),
+            'http 502'                => array( array( 'response' => array( 'code' => 502 ), 'body' => '' ), false, 'HTTP 502' ),
+            'unparseable success'     => array( array( 'response' => array( 'code' => 200 ), 'body' => '<html>' ), false, 'unreadable response' ),
+            'settlement pending'      => array( self::gateway_answer( 'settlement_pending' ), false, 'settlement_pending' ),
+            'unexpected settle error' => array( self::gateway_answer( 'unexpected_settle_error' ), false, 'unexpected_settle_error' ),
+            'no reason at all'        => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false ) ) ), false, 'no reason given' ),
+            'receipt timeout'         => array( self::gateway_answer( 'receipt_timeout' ), true, 'receipt_timeout' ),
+            'transaction reverted'    => array( self::gateway_answer( 'transaction_reverted' ), true, 'transaction_reverted' ),
+            'used nonce'              => array( self::gateway_answer( 'execution_failed: authorization is used or canceled' ), true, 'execution_failed: authorization is used or canceled' ),
+            'unlisted reason'         => array( self::gateway_answer( 'some_future_reason' ), true, 'some_future_reason' ),
+        );
+    }
+
+    #[DataProvider( 'answered_outcomes' )]
+    public function test_unconfirmed_outcome_reports_whether_the_gateway_answered_and_why( $response, bool $answered, string $reason ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertTrue( $result['pending'] ?? false, json_encode( $result ) );
+        $this->assertSame( $answered, $result['answered'] );
+        $this->assertSame( $reason, $result['reason'] );
+    }
+
+    public function test_unconfirmed_reason_is_printable_and_bounded(): void {
+        $GLOBALS['fd_test_http_response'] = self::gateway_answer( "execution_failed: \x00\n" . str_repeat( 'x', 500 ) );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertMatchesRegularExpression( '/^[\x20-\x7E]{1,200}$/', $result['reason'] );
+    }
+
+    public static function review_outcomes(): array {
+        return array(
+            'authorization consumed' => array( 'authorization_consumed' ),
+            'settlement unresolved'  => array( 'settlement_unresolved' ),
+        );
+    }
+
+    #[DataProvider( 'review_outcomes' )]
+    public function test_consumed_or_unresolved_authorization_needs_review( string $reason ): void {
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => $reason, 'transaction' => '' ) ),
+        );
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+        $this->assertArrayNotHasKey( 'pending', $result );
+    }
+
+    public static function definite_rejections(): array {
+        return array(
+            'http 400 with body'  => array( array( 'response' => array( 'code' => 400 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => 'invalid_signature' ) ) ) ),
+            'http 401'            => array( array( 'response' => array( 'code' => 401 ), 'body' => '' ) ),
+            'http 422'            => array( array( 'response' => array( 'code' => 422 ), 'body' => '{}' ) ),
+            'declined by gateway' => array( array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'success' => false, 'errorReason' => 'insufficient_funds', 'transaction' => '' ) ) ) ),
+            'unsupported network' => array( self::gateway_answer( 'unsupported_network' ) ),
+            'unsupported token'   => array( self::gateway_answer( 'unsupported_token' ) ),
+            'sanctions hit'       => array( self::gateway_answer( 'sanctions_hit' ) ),
+            'point of service'    => array( self::gateway_answer( 'point_of_service_not_found' ) ),
+            'authorization expired' => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_expired' ) ),
+            'bad signature'       => array( self::gateway_answer( 'invalid_exact_evm_payload_authorization_signature' ) ),
+            'unknown token'       => array( self::gateway_answer( 'unknown_token: 0x1111111111111111111111111111111111111111 on chain 1' ) ),
+            'authorization mismatch' => array( self::gateway_answer( 'authorization_mismatch' ) ),
+        );
+    }
+
+    #[DataProvider( 'definite_rejections' )]
+    public function test_definite_rejection_is_neither_pending_nor_review( array $response ): void {
+        $GLOBALS['fd_test_http_response'] = $response;
+
+        $result = $this->settle( self::credential() );
+
+        $this->assertFalse( $result['success'] );
+        $this->assertArrayNotHasKey( 'pending', $result );
+        $this->assertArrayNotHasKey( 'review', $result );
+    }
+
+    public function test_pending_settlement_can_be_retried_with_the_same_credential(): void {
+        $credential                       = self::credential();
+        $GLOBALS['fd_test_http_response'] = new WP_Error( 'http_request_failed', 'timed out' );
+
+        $first = $this->settle( $credential );
+
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => true, 'payer' => self::PAYER, 'transaction' => '0xabc', 'network' => self::NETWORK ) ),
+        );
+        $second = $this->settle( $credential );
+
+        $this->assertTrue( $first['pending'] ?? false );
+        $this->assertTrue( $second['success'] );
+        $this->assertSame( '0xabc', $second['transaction_reference'] );
+        $this->assertCount( 2, $GLOBALS['fd_test_requests'] );
+    }
+
+    public function test_settle_request_outlasts_the_gateway_facilitator_timeout(): void {
+        $this->settle( self::credential() );
+
+        $this->assertSame( 45, $GLOBALS['fd_test_requests'][0]['args']['timeout'] );
+    }
+
+    public function test_resumed_settlement_asks_the_gateway_about_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+        $GLOBALS['fd_test_http_response'] = array(
+            'response' => array( 'code' => 200 ),
+            'body'     => json_encode( array( 'success' => false, 'errorReason' => 'settlement_unresolved', 'transaction' => '' ) ),
+        );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertCount( 1, $GLOBALS['fd_test_requests'] );
+        $this->assertTrue( $result['review'] ?? false, json_encode( $result ) );
+    }
+
+    public function test_resumed_settlement_completes_when_the_gateway_confirms_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $result = $this->settle( $credential, 'c1', array( 'resume' => true ) );
+
+        $this->assertTrue( $result['success'], json_encode( $result ) );
+        $this->assertSame( '0xabc', $result['transaction_reference'] );
+    }
+
+    public function test_first_settlement_still_refuses_an_expired_authorization(): void {
+        $credential = self::credential();
+        $credential['paymentPayload']['payload']['authorization']['validBefore'] = (string) ( time() - 3600 );
+
+        $this->assertRejectedBeforeSettle( $this->settle( $credential, 'c1', array( 'resume' => false ) ) );
+    }
+
+    public function test_resumed_settlement_keeps_every_other_check(): void {
+        $future = self::credential();
+        $future['paymentPayload']['payload']['authorization']['validAfter'] = (string) ( time() + 3600 );
+        $this->assertRejectedBeforeSettle( $this->settle( $future, 'c1', array( 'resume' => true ) ) );
+
+        $amount = self::credential();
+        $amount['paymentPayload']['payload']['authorization']['value'] = '1';
+        $this->assertRejectedBeforeSettle( $this->settle( $amount, 'c1', array( 'resume' => true ) ) );
+
+        $recipient = self::credential();
+        $recipient['paymentPayload']['payload']['authorization']['to'] = '0x2222222222222222222222222222222222222222';
+        $this->assertRejectedBeforeSettle( $this->settle( $recipient, 'c1', array( 'resume' => true ) ) );
+    }
+}

@@ -39,6 +39,28 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
             'links'      => array(),
         );
 
+        if ( 'requires_escalation' === $status ) {
+            $response['messages'][] = array(
+                'type'     => 'error',
+                'code'     => 'payment_on_hold',
+                'content'  => 'Payment received but held for merchant review',
+                'severity' => 'requires_buyer_review',
+            );
+            $held = ! empty( $session['wc_order_id'] ) ? wc_get_order( (int) $session['wc_order_id'] ) : null;
+            if ( $held ) {
+                $response['continue_url'] = set_url_scheme( $held->get_checkout_order_received_url(), 'https' );
+            }
+        }
+
+        if ( 'payment_pending' === ( $session['status'] ?? null ) ) {
+            $response['messages'][] = array(
+                'type'     => 'error',
+                'code'     => 'payment_pending',
+                'content'  => 'Payment outcome is not confirmed yet. Call complete again with the same payment credential',
+                'severity' => 'recoverable',
+            );
+        }
+
         if ( $buyer ) {
             $response['buyer'] = $buyer;
         }
@@ -57,7 +79,7 @@ abstract class FD_UCP_Wire_Base implements FD_UCP_Wire_Format {
         $response['status'] = 'completed';
 
         $response['order'] = array(
-            'id'            => (string) $order->get_id(),
+            'id'            => $order->get_order_key(),
             'label'         => $order->get_order_number(),
             'permalink_url' => $order->get_view_order_url(),
         );
